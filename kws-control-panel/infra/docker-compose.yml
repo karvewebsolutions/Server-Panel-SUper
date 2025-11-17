@@ -1,0 +1,139 @@
+version: "3.9"
+
+services:
+  traefik:
+    image: traefik:v3.1
+    command:
+      - "--providers.file.filename=/etc/traefik/dynamic/config.yml"
+      - "--providers.file.watch=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.lets-encrypt.acme.email=admin@karve.fun"
+      - "--certificatesresolvers.lets-encrypt.acme.storage=/letsencrypt/acme.json"
+      - "--certificatesresolvers.lets-encrypt.acme.tlschallenge=true"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "./traefik/traefik.yml:/etc/traefik/traefik.yml:ro"
+      - "./traefik/dynamic/config.yml:/etc/traefik/dynamic/config.yml:ro"
+      - "traefik-letsencrypt:/letsencrypt"
+    networks:
+      - proxy
+      - internal
+
+  backend:
+    build: ../backend
+    env_file:
+      - ../backend/.env
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://kws:kws@postgres:5432/kws}
+      - SECRET_KEY=${SECRET_KEY:-changeme}
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.backend.rule=Host(`cp.karve.fun`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.backend.entrypoints=websecure"
+      - "traefik.http.routers.backend.tls.certresolver=lets-encrypt"
+      - "traefik.http.services.backend.loadbalancer.server.port=8000"
+    depends_on:
+      - postgres
+    networks:
+      - internal
+      - proxy
+
+  frontend:
+    build: ../frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=https://cp.karve.fun/api
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=Host(`cp.karve.fun`)"
+      - "traefik.http.routers.frontend.entrypoints=websecure"
+      - "traefik.http.routers.frontend.tls.certresolver=lets-encrypt"
+      - "traefik.http.services.frontend.loadbalancer.server.port=3000"
+    depends_on:
+      - backend
+    networks:
+      - proxy
+      - internal
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=kws
+      - POSTGRES_PASSWORD=kws
+      - POSTGRES_DB=kws
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - internal
+
+  redis:
+    image: redis:7-alpine
+    networks:
+      - internal
+
+  powerdns:
+    image: powerdns/pdns-auth-46
+    environment:
+      - PDNS_API=yes
+      - PDNS_API_KEY=changeme
+      - PDNS_WEBSERVER=yes
+      - PDNS_WEBSERVER_ALLOW_FROM=0.0.0.0/0
+      - PDNS_MASTER=yes
+      - PDNS_SLAVE=yes
+      - PDNS_LAUNCH=gmysql
+      - PDNS_GMYSQL_HOST=postgres
+      - PDNS_GMYSQL_PORT=5432
+      - PDNS_GMYSQL_USER=kws
+      - PDNS_GMYSQL_PASSWORD=kws
+      - PDNS_GMYSQL_DBNAME=kws
+    depends_on:
+      - postgres
+    networks:
+      - internal
+
+  powerdns-admin:
+    image: ngoduykhanh/powerdns-admin:latest
+    environment:
+      - SECRET_KEY=changeme
+      - SQLALCHEMY_DATABASE_URI=postgresql://kws:kws@postgres:5432/kws
+      - POWERDNS_URL=http://powerdns:8081
+      - POWERDNS_API_KEY=changeme
+    depends_on:
+      - powerdns
+      - postgres
+    networks:
+      - internal
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.pdns.rule=Host(`dns.cp.karve.fun`)"
+      - "traefik.http.routers.pdns.entrypoints=websecure"
+      - "traefik.http.routers.pdns.tls.certresolver=lets-encrypt"
+      - "traefik.http.services.pdns.loadbalancer.server.port=80"
+
+  nginx-static:
+    image: nginx:alpine
+    volumes:
+      - ./nginx-static/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx-static/html:/usr/share/nginx/html:ro
+    networks:
+      - proxy
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.static.rule=Host(`static.cp.karve.fun`)"
+      - "traefik.http.routers.static.entrypoints=websecure"
+      - "traefik.http.routers.static.tls.certresolver=lets-encrypt"
+      - "traefik.http.services.static.loadbalancer.server.port=80"
+
+volumes:
+  postgres-data:
+  traefik-letsencrypt:
+
+networks:
+  proxy:
+    external: false
+  internal:
+    external: false

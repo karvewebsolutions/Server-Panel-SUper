@@ -1,0 +1,1 @@
+-- PowerDNS schema placeholder. Use official schema during migrations.
