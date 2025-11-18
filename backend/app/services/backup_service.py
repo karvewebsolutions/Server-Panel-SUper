@@ -207,14 +207,26 @@ class BackupService:
             raise ValueError("Backup target missing for snapshot")
 
         handler = self.get_target_handler(target)
-        temp_file = Path(tempfile.mkdtemp()) / "restore.tar.gz"
-        handler.download(snapshot.location_uri, str(temp_file))
-        # TODO: stop container, restore files, restart app.
-        if temp_file.exists():
-            temp_file.unlink()
-            temp_dir = temp_file.parent
-            if temp_dir.exists():
-                temp_dir.rmdir()
+        temp_dir = Path(tempfile.mkdtemp(prefix=f"app-{app_instance_id}-restore-"))
+        temp_file = temp_dir / "restore.tar.gz"
+        try:
+            handler.download(snapshot.location_uri, str(temp_file))
+            if snapshot.checksum:
+                downloaded_checksum = _sha256_checksum(temp_file)
+                if downloaded_checksum != snapshot.checksum:
+                    raise ValueError("Downloaded snapshot checksum mismatch")
+
+            raise ValueError(
+                "Restore workflow for app instances is not implemented yet; snapshot download verified"
+            )
+        finally:
+            try:
+                if temp_file.exists():
+                    temp_file.unlink()
+                if temp_dir.exists():
+                    temp_dir.rmdir()
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("Failed to clean up temp restore files", exc_info=True)
 
     def run_manual_backup(
         self, scope_type: str, scope_id: int, target_id: Optional[int] = None
