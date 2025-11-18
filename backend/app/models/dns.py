@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import datetime
 from typing import List, Optional
 
@@ -30,6 +32,10 @@ class Domain(Base):
     )
     auto_ssl_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_dns_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_wildcard: Mapped[bool] = mapped_column(Boolean, default=False)
+    base_domain_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("domains.id"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     provider_credential: Mapped[Optional[DNSProviderCredential]] = relationship(
@@ -37,6 +43,16 @@ class Domain(Base):
     )
     records: Mapped[List["DNSRecord"]] = relationship(
         "DNSRecord", back_populates="domain", cascade="all, delete-orphan"
+    )
+    base_domain: Mapped[Optional["Domain"]] = relationship(
+        "Domain",
+        remote_side=[id],  # type: ignore[ListItem]
+        back_populates="subdomains",
+    )
+    subdomains: Mapped[List["Domain"]] = relationship(
+        "Domain",
+        back_populates="base_domain",
+        cascade="all, delete-orphan",
     )
 
 

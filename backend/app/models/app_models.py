@@ -64,7 +64,6 @@ class AppInstance(Base):
     main_domain_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("domains.id"), nullable=True
     )
-    extra_domain_ids: Mapped[Optional[list[int]]] = mapped_column(JSON, nullable=True)
     internal_container_name: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     docker_image: Mapped[str] = mapped_column(String, nullable=False)
     docker_port: Mapped[int] = mapped_column(Integer, default=80)
@@ -81,6 +80,9 @@ class AppInstance(Base):
     environment_variables: Mapped[List["AppEnvironmentVariable"]] = relationship(
         "AppEnvironmentVariable", back_populates="app_instance", cascade="all, delete-orphan"
     )
+    domain_mappings: Mapped[List["AppDomainMapping"]] = relationship(
+        "AppDomainMapping", back_populates="app_instance", cascade="all, delete-orphan"
+    )
 
 
 class AppEnvironmentVariable(Base):
@@ -95,3 +97,19 @@ class AppEnvironmentVariable(Base):
     is_secret: Mapped[bool] = mapped_column(Boolean, default=False)
 
     app_instance: Mapped[AppInstance] = relationship("AppInstance", back_populates="environment_variables")
+
+
+class AppDomainMapping(Base):
+    __tablename__ = "app_domain_mappings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    app_instance_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("app_instances.id"), nullable=False, index=True
+    )
+    domain_id: Mapped[int] = mapped_column(Integer, ForeignKey("domains.id"), nullable=False, index=True)
+    subdomain: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    app_instance: Mapped[AppInstance] = relationship("AppInstance", back_populates="domain_mappings")
+    domain: Mapped["Domain"] = relationship("Domain")
