@@ -9,7 +9,6 @@ from .servers import router as servers_router
 __all__ = [
     "alerts_router",
     "apps_router",
-    "backups_router",
     "dns_router",
     "domains_router",
     "logs_router",

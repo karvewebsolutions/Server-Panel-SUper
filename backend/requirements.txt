@@ -11,5 +11,3 @@ redis==5.1.1
 rq==1.16.2
 requests==2.32.3
 psutil==6.1.0
-boto3==1.35.36
-paramiko==3.4.1
