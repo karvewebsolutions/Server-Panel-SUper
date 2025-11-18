@@ -298,6 +298,12 @@ export default function AppInstancesPage() {
                 >
                   Manage Domains
                 </button>
+                <Link
+                  href={`/apps/instances/${instance.id}`}
+                  className="rounded border border-slate-700 px-3 py-1.5 hover:border-slate-500"
+                >
+                  Backups
+                </Link>
               </div>
             </div>
           ))}

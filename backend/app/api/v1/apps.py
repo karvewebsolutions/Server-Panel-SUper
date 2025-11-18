@@ -79,6 +79,14 @@ def list_app_instances(
     return query.all()
 
 
+@router.get("/instances/{instance_id}", response_model=AppInstanceRead)
+def get_app_instance(instance_id: int, db: Session = Depends(get_db)):
+    app_instance = _app_instance_with_domains(db, instance_id)
+    if not app_instance:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="AppInstance not found")
+    return app_instance
+
+
 @router.post("/instances", response_model=AppInstanceRead, status_code=status.HTTP_201_CREATED)
 def create_app_instance(payload: AppInstanceCreate, db: Session = Depends(get_db)):
     application = db.get(Application, payload.app_id)

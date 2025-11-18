@@ -113,6 +113,98 @@ export interface AppInstance {
   domain_mappings: AppDomainMapping[];
 }
 
+export interface AlertEvent {
+  id: number;
+  rule_id: number;
+  scope_type: string;
+  scope_id?: number | null;
+  message: string;
+  severity: string;
+  created_at: string;
+  is_acknowledged: boolean;
+  acknowledged_at?: string | null;
+}
+
+export interface AlertRule {
+  id: number;
+  name: string;
+  scope_type: string;
+  scope_id?: number | null;
+  rule_type: string;
+  threshold_value?: number | null;
+  is_enabled: boolean;
+  created_by_user_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ActivityLog {
+  id: number;
+  user_id?: number | null;
+  action: string;
+  metadata_json?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface SuspiciousLoginAttempt {
+  id: number;
+  username: string;
+  ip_address: string;
+  user_agent?: string | null;
+  reason: string;
+  created_at: string;
+}
+
+export interface BackupTarget {
+  id: number;
+  name: string;
+  type: string;
+  config_json: Record<string, any>;
+  is_default: boolean;
+  created_by_user_id?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BackupPolicy {
+  id: number;
+  name: string;
+  scope_type: string;
+  scope_id?: number | null;
+  schedule_cron?: string | null;
+  backup_target_id: number;
+  retain_last?: number | null;
+  is_enabled: boolean;
+  created_by_user_id?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BackupJob {
+  id: number;
+  policy_id?: number | null;
+  scope_type: string;
+  scope_id: number;
+  backup_target_id: number;
+  status: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error_message?: string | null;
+  created_at: string;
+}
+
+export interface BackupSnapshot {
+  id: number;
+  job_id: number;
+  scope_type: string;
+  scope_id: number;
+  location_uri: string;
+  size_bytes?: number | null;
+  checksum?: string | null;
+  created_at: string;
+  job?: BackupJob;
+}
+
 export interface CreateAppInstanceRequest {
   app_id: number;
   server_id: number;
@@ -164,6 +256,10 @@ export async function getAppInstances(): Promise<AppInstance[]> {
   return request<AppInstance[]>("/apps/instances");
 }
 
+export async function getAppInstance(instanceId: number): Promise<AppInstance> {
+  return request<AppInstance>(`/apps/instances/${instanceId}`);
+}
+
 export async function attachAppDomains(
   instanceId: number,
   payload: AttachDomainsRequest,
@@ -187,4 +283,100 @@ export async function getAppInstanceLogs(instanceId: number, tail = 200): Promis
     `/apps/instances/${instanceId}/logs?tail=${tail}`,
   );
   return result.logs;
+}
+
+export async function getAlerts(params: {
+  limit?: number;
+  severity?: string;
+  is_acknowledged?: boolean;
+} = {}): Promise<AlertEvent[]> {
+  const query = new URLSearchParams();
+  if (params.limit) query.set("limit", String(params.limit));
+  if (params.severity) query.set("severity", params.severity);
+  if (params.is_acknowledged !== undefined) {
+    query.set("is_acknowledged", String(params.is_acknowledged));
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<AlertEvent[]>(`/alerts${suffix}`);
+}
+
+export async function ackAlert(alertId: number): Promise<AlertEvent> {
+  return request<AlertEvent>(`/alerts/${alertId}/ack`, { method: "POST" });
+}
+
+export async function getActivityLogs(params: {
+  user_id?: number;
+  action?: string;
+  limit?: number;
+} = {}): Promise<ActivityLog[]> {
+  const query = new URLSearchParams();
+  if (params.user_id !== undefined) query.set("user_id", String(params.user_id));
+  if (params.action) query.set("action", params.action);
+  if (params.limit) query.set("limit", String(params.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<ActivityLog[]>(`/logs/activity${suffix}`);
+}
+
+export async function getSuspiciousLogins(): Promise<SuspiciousLoginAttempt[]> {
+  return request<SuspiciousLoginAttempt[]>(`/logs/security/suspicious-logins`);
+}
+
+export async function getBackupTargets(): Promise<BackupTarget[]> {
+  return request<BackupTarget[]>(`/backup-targets`);
+}
+
+export async function createBackupTarget(
+  payload: Omit<BackupTarget, "id" | "created_at" | "updated_at" | "created_by_user_id">,
+): Promise<BackupTarget> {
+  return request<BackupTarget>(`/backup-targets`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getBackupPolicies(): Promise<BackupPolicy[]> {
+  return request<BackupPolicy[]>(`/backup-policies`);
+}
+
+export async function createBackupPolicy(
+  payload: Omit<BackupPolicy, "id" | "created_at" | "updated_at" | "created_by_user_id">,
+): Promise<BackupPolicy> {
+  return request<BackupPolicy>(`/backup-policies`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateBackupPolicy(
+  id: number,
+  payload: Partial<Omit<BackupPolicy, "id" | "created_at" | "updated_at" | "created_by_user_id">>,
+): Promise<BackupPolicy> {
+  return request<BackupPolicy>(`/backup-policies/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getAppInstanceBackups(appInstanceId: number): Promise<BackupSnapshot[]> {
+  return request<BackupSnapshot[]>(`/backups/app-instances/${appInstanceId}/snapshots`);
+}
+
+export async function runAppInstanceBackup(
+  appInstanceId: number,
+  payload?: { target_id?: number; policy_id?: number },
+): Promise<BackupJob> {
+  return request<BackupJob>(`/backups/app-instances/${appInstanceId}/run`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export async function restoreAppInstanceBackup(
+  appInstanceId: number,
+  snapshotId: number,
+): Promise<{ status: string }> {
+  return request<{ status: string }>(`/backups/app-instances/${appInstanceId}/restore`, {
+    method: "POST",
+    body: JSON.stringify({ snapshot_id: snapshotId }),
+  });
 }
