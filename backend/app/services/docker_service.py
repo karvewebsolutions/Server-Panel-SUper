@@ -19,15 +19,33 @@ class DockerService:
     def _agent_headers(self, server: Server) -> Dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if server.agent_token:
-            headers["Authorization"] = f"Bearer {server.agent_token}"
+            headers["X-Agent-Token"] = server.agent_token
         return headers
 
-    def _agent_request(self, server: Server, path: str, payload: dict | None = None) -> Any:
+    def _agent_request(
+        self,
+        server: Server,
+        path: str,
+        payload: dict | None = None,
+        method: str = "post",
+        params: Optional[dict[str, Any]] = None,
+    ) -> Any:
         if not server.agent_url:
             raise ValueError("Agent URL not configured for remote server")
         url = f"{server.agent_url.rstrip('/')}/{path.lstrip('/')}"
-        response = requests.post(url, json=payload or {}, headers=self._agent_headers(server))
-        response.raise_for_status()
+        try:
+            response = requests.request(
+                method,
+                url,
+                json=payload or {},
+                params=params or {},
+                headers=self._agent_headers(server),
+                timeout=15,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:  # type: ignore[import-untyped]
+            logger.error("Failed to contact agent %s: %s", server.name, exc)
+            raise RuntimeError(f"Agent request failed: {exc}") from exc
         return response.json() if response.content else None
 
     def run_container(
@@ -44,7 +62,7 @@ class DockerService:
         networks = networks or []
         volumes = volumes or []
         logger.info("Starting container %s on server %s", name, server.name)
-        if server.agent_url:
+        if not server.is_master or server.agent_url:
             payload = {
                 "image": image,
                 "name": name,
@@ -54,7 +72,7 @@ class DockerService:
                 "volumes": volumes,
                 "networks": networks,
             }
-            data = self._agent_request(server, "/containers/run", payload)
+            data = self._agent_request(server, "/docker/run", payload)
             container_id = data.get("id") if isinstance(data, dict) else None
             if not container_id:
                 raise RuntimeError("Agent did not return container id")
@@ -82,10 +100,8 @@ class DockerService:
 
     def stop_container(self, server: Server, container_name_or_id: str) -> None:
         logger.info("Stopping container %s on server %s", container_name_or_id, server.name)
-        if server.agent_url:
-            self._agent_request(
-                server, "/containers/stop", {"container": container_name_or_id}
-            )
+        if not server.is_master or server.agent_url:
+            self._agent_request(server, "/docker/stop", {"container": container_name_or_id})
             return
         client = self._get_local_client()
         try:
@@ -97,10 +113,8 @@ class DockerService:
 
     def remove_container(self, server: Server, container_name_or_id: str) -> None:
         logger.info("Removing container %s on server %s", container_name_or_id, server.name)
-        if server.agent_url:
-            self._agent_request(
-                server, "/containers/remove", {"container": container_name_or_id}
-            )
+        if not server.is_master or server.agent_url:
+            self._agent_request(server, "/docker/remove", {"container": container_name_or_id})
             return
         client = self._get_local_client()
         try:
@@ -112,9 +126,12 @@ class DockerService:
 
     def get_logs(self, server: Server, container_name_or_id: str, tail: int = 200) -> str:
         logger.info("Fetching logs for %s on server %s", container_name_or_id, server.name)
-        if server.agent_url:
+        if not server.is_master or server.agent_url:
             data = self._agent_request(
-                server, "/containers/logs", {"container": container_name_or_id, "tail": tail}
+                server,
+                "/docker/logs",
+                method="get",
+                params={"container": container_name_or_id, "tail": tail},
             )
             return data.get("logs", "") if isinstance(data, dict) else ""
         client = self._get_local_client()
@@ -128,8 +145,8 @@ class DockerService:
     def list_containers(self, server: Server, filters: Optional[Dict[str, Any]] = None) -> list:
         logger.info("Listing containers on server %s", server.name)
         filters = filters or {}
-        if server.agent_url:
-            data = self._agent_request(server, "/containers/list", {"filters": filters})
+        if not server.is_master or server.agent_url:
+            data = self._agent_request(server, "/docker/containers", {"filters": filters})
             return data if isinstance(data, list) else []
         client = self._get_local_client()
         containers = client.containers.list(filters=filters)
