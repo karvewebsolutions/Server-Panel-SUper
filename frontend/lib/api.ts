@@ -113,6 +113,48 @@ export interface AppInstance {
   domain_mappings: AppDomainMapping[];
 }
 
+export interface AlertEvent {
+  id: number;
+  rule_id: number;
+  scope_type: string;
+  scope_id?: number | null;
+  message: string;
+  severity: string;
+  created_at: string;
+  is_acknowledged: boolean;
+  acknowledged_at?: string | null;
+}
+
+export interface AlertRule {
+  id: number;
+  name: string;
+  scope_type: string;
+  scope_id?: number | null;
+  rule_type: string;
+  threshold_value?: number | null;
+  is_enabled: boolean;
+  created_by_user_id: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ActivityLog {
+  id: number;
+  user_id?: number | null;
+  action: string;
+  metadata_json?: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface SuspiciousLoginAttempt {
+  id: number;
+  username: string;
+  ip_address: string;
+  user_agent?: string | null;
+  reason: string;
+  created_at: string;
+}
+
 export interface CreateAppInstanceRequest {
   app_id: number;
   server_id: number;
@@ -187,4 +229,40 @@ export async function getAppInstanceLogs(instanceId: number, tail = 200): Promis
     `/apps/instances/${instanceId}/logs?tail=${tail}`,
   );
   return result.logs;
+}
+
+export async function getAlerts(params: {
+  limit?: number;
+  severity?: string;
+  is_acknowledged?: boolean;
+} = {}): Promise<AlertEvent[]> {
+  const query = new URLSearchParams();
+  if (params.limit) query.set("limit", String(params.limit));
+  if (params.severity) query.set("severity", params.severity);
+  if (params.is_acknowledged !== undefined) {
+    query.set("is_acknowledged", String(params.is_acknowledged));
+  }
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<AlertEvent[]>(`/alerts${suffix}`);
+}
+
+export async function ackAlert(alertId: number): Promise<AlertEvent> {
+  return request<AlertEvent>(`/alerts/${alertId}/ack`, { method: "POST" });
+}
+
+export async function getActivityLogs(params: {
+  user_id?: number;
+  action?: string;
+  limit?: number;
+} = {}): Promise<ActivityLog[]> {
+  const query = new URLSearchParams();
+  if (params.user_id !== undefined) query.set("user_id", String(params.user_id));
+  if (params.action) query.set("action", params.action);
+  if (params.limit) query.set("limit", String(params.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : "";
+  return request<ActivityLog[]>(`/logs/activity${suffix}`);
+}
+
+export async function getSuspiciousLogins(): Promise<SuspiciousLoginAttempt[]> {
+  return request<SuspiciousLoginAttempt[]>(`/logs/security/suspicious-logins`);
 }
