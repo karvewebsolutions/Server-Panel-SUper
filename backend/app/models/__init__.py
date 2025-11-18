@@ -7,6 +7,7 @@ from .app_models import (
     ServerMetricSnapshot,
 )
 from .dns import DNSProviderCredential, DNSRecord, Domain
+from .monitoring_models import ActivityLog, AlertEvent, AlertRule, SuspiciousLoginAttempt
 from .user import User
 
 __all__ = [
