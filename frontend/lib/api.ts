@@ -206,6 +206,10 @@ export async function getAppInstances(): Promise<AppInstance[]> {
   return request<AppInstance[]>("/apps/instances");
 }
 
+export async function getAppInstance(instanceId: number): Promise<AppInstance> {
+  return request<AppInstance>(`/apps/instances/${instanceId}`);
+}
+
 export async function attachAppDomains(
   instanceId: number,
   payload: AttachDomainsRequest,

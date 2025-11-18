@@ -1,5 +1,6 @@
 from .alerts import router as alerts_router
 from .apps import router as apps_router
+from .backups import router as backups_router
 from .dns import router as dns_router
 from .domains import router as domains_router
 from .logs import router as logs_router
