@@ -4,6 +4,7 @@ from .app_models import (
     AppInstance,
     Application,
     Server,
+    ServerMetricSnapshot,
 )
 from .dns import DNSProviderCredential, DNSRecord, Domain
 from .user import User
@@ -14,6 +15,7 @@ __all__ = [
     "AppInstance",
     "Application",
     "Server",
+    "ServerMetricSnapshot",
     "DNSProviderCredential",
     "DNSRecord",
     "Domain",

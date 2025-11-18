@@ -22,6 +22,8 @@ class Server(Base):
     agent_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     agent_token: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     location: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -29,6 +31,12 @@ class Server(Base):
 
     app_instances: Mapped[List["AppInstance"]] = relationship(
         "AppInstance", back_populates="server", cascade="all, delete-orphan"
+    )
+    metric_snapshots: Mapped[List["ServerMetricSnapshot"]] = relationship(
+        "ServerMetricSnapshot",
+        back_populates="server",
+        cascade="all, delete-orphan",
+        order_by="ServerMetricSnapshot.created_at.desc()",
     )
 
 
@@ -113,3 +121,18 @@ class AppDomainMapping(Base):
 
     app_instance: Mapped[AppInstance] = relationship("AppInstance", back_populates="domain_mappings")
     domain: Mapped["Domain"] = relationship("Domain")
+
+
+class ServerMetricSnapshot(Base):
+    __tablename__ = "server_metric_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    server_id: Mapped[int] = mapped_column(Integer, ForeignKey("servers.id"), index=True)
+    cpu_percent: Mapped[float] = mapped_column()
+    memory_percent: Mapped[float] = mapped_column()
+    disk_percent: Mapped[float] = mapped_column()
+    docker_running_containers: Mapped[int] = mapped_column(Integer, default=0)
+    docker_total_containers: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    server: Mapped[Server] = relationship("Server", back_populates="metric_snapshots")
