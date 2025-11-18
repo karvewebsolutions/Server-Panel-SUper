@@ -20,7 +20,7 @@ class MonitoringService:
 
     def _get_default_creator_id(self) -> Optional[int]:
         user = (
-            self.db.query(User.id)
+            self.db.query(User)
             .filter(User.is_active.is_(True))
             .order_by(User.id.asc())
             .first()
