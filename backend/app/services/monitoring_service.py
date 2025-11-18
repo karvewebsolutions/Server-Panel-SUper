@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from sqlalchemy.orm import Session
 
-from ..models import AlertEvent, AlertRule, AppInstance, Server, ServerMetricSnapshot
+from ..models import AlertEvent, AlertRule, AppInstance, Server, ServerMetricSnapshot, User
 
 DEFAULT_THRESHOLDS = {
     "cpu_high": 90.0,
@@ -17,6 +17,17 @@ DEFAULT_THRESHOLDS = {
 class MonitoringService:
     def __init__(self, db: Session):
         self.db = db
+
+    def _get_default_creator_id(self) -> Optional[int]:
+        user = (
+            self.db.query(User)
+            .filter(User.is_active.is_(True))
+            .order_by(User.id.asc())
+            .first()
+        )
+        if user:
+            return user.id
+        return None
 
     def _resolve_rule(
         self, scope_type: str, rule_type: str, scope_id: Optional[int]
@@ -80,13 +91,16 @@ class MonitoringService:
                 message = f"{label} usage high on {server.name}: {value:.1f}% (threshold {threshold:.1f}%)"
                 selected_rule = rule
                 if not selected_rule:
+                    creator_id = self._get_default_creator_id()
+                    if creator_id is None:
+                        continue
                     selected_rule = AlertRule(
                         name=f"Default {label} threshold",
                         scope_type="server",
                         scope_id=server.id,
                         rule_type=rule_type,
                         threshold_value=threshold,
-                        created_by_user_id=0,
+                        created_by_user_id=creator_id,
                         is_enabled=True,
                     )
                     self.db.add(selected_rule)

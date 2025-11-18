@@ -9,6 +9,7 @@ from ...core.database import get_db
 from ...models import AlertEvent, AlertRule
 from ...schemas.monitoring_schemas import AlertEventRead, AlertRuleCreate, AlertRuleRead
 from ...services.monitoring_service import MonitoringService
+from ...services.auth import get_current_user
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
@@ -47,8 +48,12 @@ def list_rules(db: Session = Depends(get_db)):
 
 
 @router.post("/rules", response_model=AlertRuleRead, status_code=status.HTTP_201_CREATED)
-def create_rule(payload: AlertRuleCreate, db: Session = Depends(get_db)):
-    rule = AlertRule(**payload.model_dump(), created_by_user_id=0)
+def create_rule(
+    payload: AlertRuleCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    rule = AlertRule(**payload.model_dump(), created_by_user_id=current_user.id)
     db.add(rule)
     db.commit()
     db.refresh(rule)
