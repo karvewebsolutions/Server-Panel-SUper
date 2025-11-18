@@ -62,7 +62,10 @@ class DNSManager:
     ) -> List[DNSRecord]:
         provider = self._get_provider(domain)
         provider.ensure_zone(domain)
-        records = self.auto_provisioner.generate_app_records(app, domain, subdomains)
+        effective_subdomains = [] if domain.is_wildcard else (subdomains or [])
+        records = self.auto_provisioner.generate_app_records(
+            app, domain, subdomains=effective_subdomains
+        )
         persisted = self._persist_records(records)
         if isinstance(provider, PowerDNSService):
             for record in persisted:

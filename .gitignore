@@ -1,0 +1,17 @@
+# Python artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Node artifacts
+frontend/node_modules/
+frontend/.next/
+frontend/.turbo/
+
+# Editor and tooling
+.DS_Store
+*.log
+
+# Env files
+*.env
+*.env.*
