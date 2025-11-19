@@ -19,13 +19,12 @@ class MonitoringService:
         self.db = db
 
     def _get_default_creator_id(self) -> Optional[int]:
-        user = (
-            self.db.query(User)
+        return (
+            self.db.query(User.id)
             .filter(User.is_active.is_(True))
             .order_by(User.id.asc())
-            .first()
+            .scalar()
         )
-        return user.id if user else None
 
     def _resolve_rule(
         self, scope_type: str, rule_type: str, scope_id: Optional[int]
