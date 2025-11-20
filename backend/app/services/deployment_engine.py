@@ -82,7 +82,19 @@ class DeploymentEngine:
             server = db.get(Server, app_instance.server_id)
             if not server:
                 raise ValueError("Server not found")
-            self.docker_service.stop_container(server, app_instance.internal_container_name)
+            try:
+                self.docker_service.stop_container(
+                    server, app_instance.internal_container_name
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                if self._is_container_missing_error(exc):
+                    logger.info(
+                        "Container %s already absent when stopping: %s",
+                        app_instance.internal_container_name,
+                        exc,
+                    )
+                else:
+                    raise
             app_instance.status = "stopped"
             db.commit()
         finally:
