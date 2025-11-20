@@ -104,7 +104,9 @@ class DeploymentEngine:
             if restore_dir:
                 if data_dir.exists():
                     shutil.rmtree(data_dir)
-                shutil.copytree(restore_dir, data_dir)
+                # Move restored content into the data directory so the container
+                # mount picks up the restored files on restart.
+                shutil.move(str(restore_dir), data_dir)
 
             fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
             dns_manager = DNSManager(db)
