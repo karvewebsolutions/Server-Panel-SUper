@@ -237,7 +237,7 @@ class BackupService:
 
             engine = DeploymentEngine()
             engine.stop_app_instance(app_instance_id)
-            engine.restart_app_instance(app_instance_id)
+            engine.restart_app_instance(app_instance_id, restore_dir=restore_target_dir)
         finally:
             try:
                 if temp_file.exists():
