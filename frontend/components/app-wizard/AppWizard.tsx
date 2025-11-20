@@ -55,13 +55,12 @@ export function AppWizard() {
           getDomains(),
           getApplications(),
         ]);
+        const defaultBlueprint = blueprintData[0];
         setBlueprints(blueprintData);
         setServers(serverData);
         setDomains(domainData);
         setApplications(applicationData);
-        if (blueprintData.length > 0 && !selectedBlueprint) {
-          setSelectedBlueprint(blueprintData[0].type);
-        }
+        setSelectedBlueprint((current) => current ?? defaultBlueprint?.type ?? null);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Unable to load wizard data");
       } finally {
