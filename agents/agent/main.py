@@ -16,10 +16,13 @@ app = FastAPI(title="KWS Agent", version="0.1.0")
 
 
 def require_token(request: Request):
-    if request.method in {"POST", "PUT", "DELETE"}:
-        header = request.headers.get("X-Agent-Token")
-        if AGENT_TOKEN and header != AGENT_TOKEN:
-            raise HTTPException(status_code=401, detail="Unauthorized")
+    if not AGENT_TOKEN:
+        return
+    if request.url.path == "/health":
+        return
+    header = request.headers.get("X-Agent-Token")
+    if header != AGENT_TOKEN:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 def _get_docker_client() -> docker.DockerClient:

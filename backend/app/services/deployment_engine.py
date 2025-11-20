@@ -101,33 +101,19 @@ class DeploymentEngine:
 
             fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
             dns_manager = DNSManager(db)
-            try:
-                self._provision_dns_records(dns_manager, app_instance, domain_map)
-            except Exception as exc:  # pylint: disable=broad-except
-                logger.error(
-                    "DNS provisioning failed for app instance %s: %s", app_instance.id, exc
-                )
-                app_instance.status = "error"
-                db.commit()
-                db.refresh(app_instance)
-                return app_instance
-
-            # Stop the running container before manipulating the data directory to
-            # avoid copying over a mounted path. Removing the container only after
-            # DNS provisioning succeeds prevents unnecessary downtime when DNS
-            # provisioning fails.
-            self.docker_service.stop_container(server, app_instance.internal_container_name)
-            self.docker_service.remove_container(server, app_instance.internal_container_name)
+            self._provision_dns_records(dns_manager, app_instance, domain_map)
 
             data_dir = self._get_data_dir(app_instance.id)
-            data_dir.mkdir(parents=True, exist_ok=True)
+            data_dir.parent.mkdir(parents=True, exist_ok=True)
+
             if restore_dir:
-                # Ensure the runtime data directory reflects the restored content
-                # that was downloaded and extracted for this app instance.
-                if data_dir.exists():
-                    shutil.rmtree(data_dir)
-                shutil.copytree(restore_dir, data_dir)
-                shutil.rmtree(restore_dir, ignore_errors=True)
+                # Stop and remove the existing container before deleting the mounted data dir
+                self._stop_and_remove_container(server, app_instance.internal_container_name)
+                self._replace_data_dir(data_dir, restore_dir)
+            else:
+                # Ensure we restart from a clean slate
+                self._stop_and_remove_container(server, app_instance.internal_container_name)
+                data_dir.mkdir(parents=True, exist_ok=True)
             ports = {f"{app_instance.docker_port}/tcp": None}
             labels = TraefikLabelBuilder.build_labels_for_app_instance(
                 app_instance,
@@ -154,6 +140,16 @@ class DeploymentEngine:
 
     def _get_data_dir(self, app_instance_id: int) -> Path:
         return Path("/var/lib/server-panel/app-data") / f"app_instance_{app_instance_id}"
+
+    def _stop_and_remove_container(self, server: Server, container_name: str) -> None:
+        """Ensure the container is stopped and removed before mutating mounted data."""
+        self.docker_service.stop_container(server, container_name)
+        self.docker_service.remove_container(server, container_name)
+
+    def _replace_data_dir(self, data_dir: Path, restore_dir: Path) -> None:
+        if data_dir.exists():
+            shutil.rmtree(data_dir)
+        shutil.copytree(restore_dir, data_dir)
 
     def _collect_domain_context(
         self, db: Session, app_instance: AppInstance
