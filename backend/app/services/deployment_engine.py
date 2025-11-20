@@ -101,7 +101,16 @@ class DeploymentEngine:
 
             fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
             dns_manager = DNSManager(db)
-            self._provision_dns_records(dns_manager, app_instance, domain_map)
+            try:
+                self._provision_dns_records(dns_manager, app_instance, domain_map)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.error(
+                    "DNS provisioning failed for app instance %s: %s", app_instance.id, exc
+                )
+                app_instance.status = "error"
+                db.commit()
+                db.refresh(app_instance)
+                return app_instance
 
             # Stop the running container before manipulating the data directory to
             # avoid copying over a mounted path. Removing the container only after
