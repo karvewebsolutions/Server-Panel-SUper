@@ -106,13 +106,13 @@ class DeploymentEngine:
             data_dir = self._get_data_dir(app_instance.id)
             data_dir.parent.mkdir(parents=True, exist_ok=True)
 
+            # Always stop/remove any existing container before mutating the mounted data dir
+            self._stop_and_remove_container(server, app_instance.internal_container_name)
+
             if restore_dir:
-                # Stop and remove the existing container before deleting the mounted data dir
-                self._stop_and_remove_container(server, app_instance.internal_container_name)
                 self._replace_data_dir(data_dir, restore_dir)
             else:
                 # Ensure we restart from a clean slate
-                self._stop_and_remove_container(server, app_instance.internal_container_name)
                 data_dir.mkdir(parents=True, exist_ok=True)
             ports = {f"{app_instance.docker_port}/tcp": None}
             labels = TraefikLabelBuilder.build_labels_for_app_instance(
