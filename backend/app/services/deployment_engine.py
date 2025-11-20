@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Sequence
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -81,7 +82,9 @@ class DeploymentEngine:
         finally:
             db.close()
 
-    def restart_app_instance(self, app_instance_id: int) -> AppInstance:
+    def restart_app_instance(
+        self, app_instance_id: int, restore_dir: Optional[Path] = None
+    ) -> AppInstance:
         db = self._get_db()
         try:
             app_instance = db.get(AppInstance, app_instance_id)
@@ -101,6 +104,9 @@ class DeploymentEngine:
                 fqdn_list,
                 wildcard_domains=wildcard_roots,
             )
+            volumes: list[str] = []
+            if restore_dir:
+                volumes.append(f"{restore_dir}:/data")
             container_id = self.docker_service.run_container(
                 server,
                 app_instance.docker_image,
@@ -108,6 +114,7 @@ class DeploymentEngine:
                 app_instance.env_vars,
                 labels,
                 ports,
+                volumes=volumes or None,
                 networks=["cp-net"],
             )
             logger.info("Restarted container %s for app instance %s", container_id, app_instance.id)
