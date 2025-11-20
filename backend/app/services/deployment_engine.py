@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -107,6 +108,7 @@ class DeploymentEngine:
             data_dir.parent.mkdir(parents=True, exist_ok=True)
 
             if restore_dir:
+                self._validate_restore_dir(restore_dir)
                 # Stop and remove the existing container before deleting the mounted data dir
                 self._stop_and_remove_container(server, app_instance.internal_container_name)
                 self._replace_data_dir(data_dir, restore_dir)
@@ -146,10 +148,40 @@ class DeploymentEngine:
         self.docker_service.stop_container(server, container_name)
         self.docker_service.remove_container(server, container_name)
 
+    def _validate_restore_dir(self, restore_dir: Path) -> None:
+        if not restore_dir.exists():
+            raise ValueError(f"Restore directory not found: {restore_dir}")
+        if not restore_dir.is_dir():
+            raise ValueError(f"Restore path is not a directory: {restore_dir}")
+        if not os.access(restore_dir, os.R_OK | os.X_OK):
+            raise ValueError(f"Restore directory is not accessible: {restore_dir}")
+
     def _replace_data_dir(self, data_dir: Path, restore_dir: Path) -> None:
-        if data_dir.exists():
-            shutil.rmtree(data_dir)
-        shutil.copytree(restore_dir, data_dir)
+        temp_data_dir = data_dir.with_name(f"{data_dir.name}_temp_restore")
+        backup_dir = data_dir.with_name(f"{data_dir.name}_backup")
+
+        # Clean up any stale state from previous attempts
+        for path in (temp_data_dir, backup_dir):
+            if path.exists():
+                shutil.rmtree(path)
+
+        shutil.copytree(restore_dir, temp_data_dir)
+
+        backup_created = False
+        try:
+            if data_dir.exists():
+                shutil.move(str(data_dir), str(backup_dir))
+                backup_created = True
+            shutil.move(str(temp_data_dir), str(data_dir))
+        except Exception:
+            if backup_created and backup_dir.exists():
+                shutil.move(str(backup_dir), str(data_dir))
+            if temp_data_dir.exists():
+                shutil.rmtree(temp_data_dir)
+            raise
+        else:
+            if backup_dir.exists():
+                shutil.rmtree(backup_dir)
 
     def _collect_domain_context(
         self, db: Session, app_instance: AppInstance
