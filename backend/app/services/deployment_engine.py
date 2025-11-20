@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Sequence
+import shutil
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence
 
 from sqlalchemy.orm import Session
 
@@ -41,6 +43,9 @@ class DeploymentEngine:
             labels = TraefikLabelBuilder.build_labels_for_app_instance(
                 app_instance, fqdn_list, wildcard_domains=wildcard_roots
             )
+            data_dir = self._get_data_dir(app_instance.id)
+            data_dir.mkdir(parents=True, exist_ok=True)
+
             ports = {f"{app_instance.docker_port}/tcp": None}
             container_id = self.docker_service.run_container(
                 server=server,
@@ -49,6 +54,7 @@ class DeploymentEngine:
                 env=app_instance.env_vars,
                 labels=labels,
                 ports=ports,
+                volumes=[f"{data_dir}:/data"],
                 networks=["cp-net"],
             )
             logger.info("Deployed container %s for app instance %s", container_id, app_instance.id)
@@ -81,7 +87,9 @@ class DeploymentEngine:
         finally:
             db.close()
 
-    def restart_app_instance(self, app_instance_id: int) -> AppInstance:
+    def restart_app_instance(
+        self, app_instance_id: int, restore_dir: Optional[Path] = None
+    ) -> AppInstance:
         db = self._get_db()
         try:
             app_instance = db.get(AppInstance, app_instance_id)
@@ -90,6 +98,14 @@ class DeploymentEngine:
             server = db.get(Server, app_instance.server_id)
             if not server:
                 raise ValueError("Server not found")
+
+            data_dir = self._get_data_dir(app_instance.id)
+            data_dir.mkdir(parents=True, exist_ok=True)
+            if restore_dir:
+                if data_dir.exists():
+                    shutil.rmtree(data_dir)
+                shutil.copytree(restore_dir, data_dir)
+
             fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
             dns_manager = DNSManager(db)
             self._provision_dns_records(dns_manager, app_instance, domain_map)
@@ -108,6 +124,7 @@ class DeploymentEngine:
                 app_instance.env_vars,
                 labels,
                 ports,
+                volumes=[f"{data_dir}:/data"],
                 networks=["cp-net"],
             )
             logger.info("Restarted container %s for app instance %s", container_id, app_instance.id)
@@ -117,6 +134,9 @@ class DeploymentEngine:
             return app_instance
         finally:
             db.close()
+
+    def _get_data_dir(self, app_instance_id: int) -> Path:
+        return Path("/var/lib/server-panel/app-data") / f"app_instance_{app_instance_id}"
 
     def _collect_domain_context(
         self, db: Session, app_instance: AppInstance
