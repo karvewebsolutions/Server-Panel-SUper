@@ -99,15 +99,17 @@ class DeploymentEngine:
             if not server:
                 raise ValueError("Server not found")
 
-            fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
+            # Always stop/remove any existing container before mutating the mounted data dir
+            self._stop_and_remove_container(server, app_instance.internal_container_name)
+
+            fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(
+                db, app_instance
+            )
             dns_manager = DNSManager(db)
             self._provision_dns_records(dns_manager, app_instance, domain_map)
 
             data_dir = self._get_data_dir(app_instance.id)
             data_dir.parent.mkdir(parents=True, exist_ok=True)
-
-            # Always stop/remove any existing container before mutating the mounted data dir
-            self._stop_and_remove_container(server, app_instance.internal_container_name)
 
             if restore_dir:
                 self._replace_data_dir(data_dir, restore_dir)
