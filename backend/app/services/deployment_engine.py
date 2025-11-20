@@ -104,8 +104,7 @@ class DeploymentEngine:
             self._provision_dns_records(dns_manager, app_instance, domain_map)
 
             # Stop and remove the existing container before touching the mounted data dir
-            self.docker_service.stop_container(server, app_instance.internal_container_name)
-            self.docker_service.remove_container(server, app_instance.internal_container_name)
+            self._stop_and_remove_container(server, app_instance.internal_container_name)
 
             data_dir = self._get_data_dir(app_instance.id)
             data_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -141,6 +140,11 @@ class DeploymentEngine:
 
     def _get_data_dir(self, app_instance_id: int) -> Path:
         return Path("/var/lib/server-panel/app-data") / f"app_instance_{app_instance_id}"
+
+    def _stop_and_remove_container(self, server: Server, container_name: str) -> None:
+        """Ensure the container is stopped and removed before mutating mounted data."""
+        self.docker_service.stop_container(server, container_name)
+        self.docker_service.remove_container(server, container_name)
 
     def _collect_domain_context(
         self, db: Session, app_instance: AppInstance
