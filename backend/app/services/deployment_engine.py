@@ -137,6 +137,13 @@ class DeploymentEngine:
             db.commit()
             db.refresh(app_instance)
             return app_instance
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error("Restart failed for app instance %s: %s", app_instance_id, exc)
+            db.query(AppInstance).filter(AppInstance.id == app_instance_id).update(
+                {"status": "error"}
+            )
+            db.commit()
+            raise
         finally:
             db.close()
 
