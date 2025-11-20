@@ -106,12 +106,13 @@ class DeploymentEngine:
             data_dir = self._get_data_dir(app_instance.id)
             data_dir.parent.mkdir(parents=True, exist_ok=True)
 
-            # Always stop/remove any existing container before mutating the mounted data dir
-            self._stop_and_remove_container(server, app_instance.internal_container_name)
-
             if restore_dir:
-                self._replace_data_dir(data_dir, restore_dir)
+                self._replace_data_dir(
+                    server, app_instance.internal_container_name, data_dir, restore_dir
+                )
             else:
+                # Always stop/remove any existing container before mutating the mounted data dir
+                self._stop_and_remove_container(server, app_instance.internal_container_name)
                 # Ensure we restart from a clean slate
                 data_dir.mkdir(parents=True, exist_ok=True)
             ports = {f"{app_instance.docker_port}/tcp": None}
@@ -146,7 +147,15 @@ class DeploymentEngine:
         self.docker_service.stop_container(server, container_name)
         self.docker_service.remove_container(server, container_name)
 
-    def _replace_data_dir(self, data_dir: Path, restore_dir: Path) -> None:
+    def _replace_data_dir(
+        self,
+        server: Server,
+        container_name: str,
+        data_dir: Path,
+        restore_dir: Path,
+    ) -> None:
+        # Ensure the mounted volume is detached before mutating the filesystem
+        self._stop_and_remove_container(server, container_name)
         if data_dir.exists():
             shutil.rmtree(data_dir)
         shutil.copytree(restore_dir, data_dir)
