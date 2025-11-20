@@ -99,9 +99,14 @@ class DeploymentEngine:
             if not server:
                 raise ValueError("Server not found")
 
+            fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
+            dns_manager = DNSManager(db)
+            self._provision_dns_records(dns_manager, app_instance, domain_map)
+
             # Stop the running container before manipulating the data directory to
-            # avoid copying over a mounted path. Removing the container also ensures
-            # a clean start after restoring content.
+            # avoid copying over a mounted path. Removing the container only after
+            # DNS provisioning succeeds prevents unnecessary downtime when DNS
+            # provisioning fails.
             self.docker_service.stop_container(server, app_instance.internal_container_name)
             self.docker_service.remove_container(server, app_instance.internal_container_name)
 
@@ -114,10 +119,6 @@ class DeploymentEngine:
                     shutil.rmtree(data_dir)
                 shutil.copytree(restore_dir, data_dir)
                 shutil.rmtree(restore_dir, ignore_errors=True)
-
-            fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
-            dns_manager = DNSManager(db)
-            self._provision_dns_records(dns_manager, app_instance, domain_map)
             ports = {f"{app_instance.docker_port}/tcp": None}
             labels = TraefikLabelBuilder.build_labels_for_app_instance(
                 app_instance,
