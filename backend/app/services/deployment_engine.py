@@ -99,18 +99,17 @@ class DeploymentEngine:
             if not server:
                 raise ValueError("Server not found")
 
+            fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
+            dns_manager = DNSManager(db)
+            self._provision_dns_records(dns_manager, app_instance, domain_map)
+            self.docker_service.stop_container(server, app_instance.internal_container_name)
+            self.docker_service.remove_container(server, app_instance.internal_container_name)
             data_dir = self._get_data_dir(app_instance.id)
             data_dir.mkdir(parents=True, exist_ok=True)
             if restore_dir:
                 if data_dir.exists():
                     shutil.rmtree(data_dir)
                 shutil.copytree(restore_dir, data_dir)
-
-            fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
-            dns_manager = DNSManager(db)
-            self._provision_dns_records(dns_manager, app_instance, domain_map)
-            self.docker_service.stop_container(server, app_instance.internal_container_name)
-            self.docker_service.remove_container(server, app_instance.internal_container_name)
             ports = {f"{app_instance.docker_port}/tcp": None}
             labels = TraefikLabelBuilder.build_labels_for_app_instance(
                 app_instance,
