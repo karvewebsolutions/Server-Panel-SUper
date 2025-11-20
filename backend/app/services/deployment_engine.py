@@ -99,6 +99,12 @@ class DeploymentEngine:
             if not server:
                 raise ValueError("Server not found")
 
+            # Stop the running container before manipulating the data directory to
+            # avoid copying over a mounted path. Removing the container also ensures
+            # a clean start after restoring content.
+            self.docker_service.stop_container(server, app_instance.internal_container_name)
+            self.docker_service.remove_container(server, app_instance.internal_container_name)
+
             data_dir = self._get_data_dir(app_instance.id)
             data_dir.mkdir(parents=True, exist_ok=True)
             if restore_dir:
@@ -112,8 +118,6 @@ class DeploymentEngine:
             fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
             dns_manager = DNSManager(db)
             self._provision_dns_records(dns_manager, app_instance, domain_map)
-            self.docker_service.stop_container(server, app_instance.internal_container_name)
-            self.docker_service.remove_container(server, app_instance.internal_container_name)
             ports = {f"{app_instance.docker_port}/tcp": None}
             labels = TraefikLabelBuilder.build_labels_for_app_instance(
                 app_instance,
