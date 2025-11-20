@@ -102,11 +102,12 @@ class DeploymentEngine:
             data_dir = self._get_data_dir(app_instance.id)
             data_dir.mkdir(parents=True, exist_ok=True)
             if restore_dir:
+                # Ensure the runtime data directory reflects the restored content
+                # that was downloaded and extracted for this app instance.
                 if data_dir.exists():
                     shutil.rmtree(data_dir)
-                # Move restored content into the data directory so the container
-                # mount picks up the restored files on restart.
-                shutil.move(str(restore_dir), data_dir)
+                shutil.copytree(restore_dir, data_dir)
+                shutil.rmtree(restore_dir, ignore_errors=True)
 
             fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
             dns_manager = DNSManager(db)
