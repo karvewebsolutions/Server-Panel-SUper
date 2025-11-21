@@ -100,7 +100,6 @@ def create_domain_record(
     if not domain:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Domain not found")
     record = DNSRecord(domain_id=domain_id, **payload.model_dump())
-    db.add(record)
     manager = DNSManager(db)
     record.domain = domain
     provider = manager._get_provider(domain)
@@ -110,15 +109,18 @@ def create_domain_record(
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
                 detail="Provider does not support record creation",
             )
+        db.add(record)
+        db.flush()
         provider.create_record(record)
-        db.commit()
     except HTTPException:
         db.rollback()
         raise
     except Exception:
         db.rollback()
         raise
-    db.refresh(record)
+    else:
+        db.commit()
+        db.refresh(record)
     return record
 
 
