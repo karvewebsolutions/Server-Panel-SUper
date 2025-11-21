@@ -122,7 +122,15 @@ class DeploymentEngine:
 
             fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
             dns_manager = DNSManager(db)
-            self._provision_dns_records(dns_manager, app_instance, domain_map)
+            dns_success, dns_errors = self._provision_dns_records(
+                dns_manager, app_instance, domain_map
+            )
+            if not dns_success:
+                error_detail = "; ".join(dns_errors) if dns_errors else "unknown error"
+                raise RuntimeError(
+                    "DNS provisioning failed for one or more domains; aborting restart"
+                    f" ({error_detail})"
+                )
 
             data_dir = self._get_data_dir(app_instance.id)
             data_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -289,7 +297,7 @@ class DeploymentEngine:
         dns_manager: DNSManager,
         app_instance: AppInstance,
         domain_map: Dict[int, Dict[str, object]],
-    ) -> None:
+    ) -> tuple[bool, List[str]]:
         failures: List[str] = []
         for ctx in domain_map.values():
             domain: Domain = ctx["domain"]  # type: ignore[assignment]
@@ -307,9 +315,9 @@ class DeploymentEngine:
                 failures.append(domain.domain_name)
 
         if failures:
-            raise RuntimeError(
-                "DNS provisioning failed for: " + ", ".join(sorted(failures))
-            )
+            return False, sorted(failures)
+
+        return True, []
 
     def get_app_logs(self, app_instance_id: int, tail: int = 200) -> str:
         db = self._get_db()
