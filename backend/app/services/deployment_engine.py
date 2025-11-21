@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence, Set
 
 from sqlalchemy.orm import Session
 
@@ -40,7 +40,15 @@ class DeploymentEngine:
 
             fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
             dns_manager = DNSManager(db)
-            self._provision_dns_records(dns_manager, app_instance, domain_map)
+            dns_success, dns_errors = self._provision_dns_records(
+                dns_manager, app_instance, domain_map
+            )
+            if not dns_success:
+                error_detail = "; ".join(dns_errors) if dns_errors else "unknown error"
+                raise RuntimeError(
+                    "DNS provisioning failed for one or more domains; aborting deployment"
+                    f" ({error_detail})"
+                )
             labels = TraefikLabelBuilder.build_labels_for_app_instance(
                 app_instance, fqdn_list, wildcard_domains=wildcard_roots
             )
@@ -199,9 +207,76 @@ class DeploymentEngine:
             # fall back to string checks below.
             pass
 
-        # Generic string checks for agent or other error messages
-        message = str(exc).lower()
-        return "not found" in message or "404" in message
+        def _iter_error_chain(error: Exception):
+            current: Exception | None = error
+            while current:
+                yield current
+                current = current.__cause__ or current.__context__
+
+        def _collect_messages(error: Exception) -> List[str]:
+            messages: List[str] = []
+            seen: Set[str] = set()
+            for err in _iter_error_chain(error):
+                message = str(err).lower()
+                if message and message not in seen:
+                    seen.add(message)
+                    messages.append(message)
+
+                response = getattr(err, "response", None)
+                if response is not None:
+                    status_code = getattr(response, "status_code", None)
+                    if status_code in {400, 404}:
+                        try:
+                            data = response.json()
+                        except Exception:  # pylint: disable=broad-except
+                            data = None
+
+                        detail: Optional[str] = None
+                        if isinstance(data, dict):
+                            raw_detail = data.get("detail")
+                            detail = raw_detail if isinstance(raw_detail, str) else None
+                        elif isinstance(data, str):
+                            detail = data
+
+                        if detail:
+                            detail_lower = detail.lower()
+                            if detail_lower not in seen:
+                                seen.add(detail_lower)
+                                messages.append(detail_lower)
+                            # If the agent responds with a wrapped Docker NotFound
+                            # message we can return early when we see the expected
+                            # keywords to avoid falling through to outer messages
+                            # that lack the context.
+                            if any(keyword in detail_lower for keyword in keywords):
+                                return messages
+
+                    try:
+                        data = response.json()
+                    except Exception:  # pylint: disable=broad-except
+                        data = None
+
+                    detail = data.get("detail") if isinstance(data, dict) else None
+                    if detail:
+                        detail_str = str(detail).lower()
+                        if detail_str not in seen:
+                            seen.add(detail_str)
+                            messages.append(detail_str)
+                    else:
+                        try:
+                            text = response.text
+                        except Exception:  # pylint: disable=broad-except
+                            text = None
+                        if text:
+                            text_lower = text.lower()
+                            if text_lower not in seen:
+                                seen.add(text_lower)
+                                messages.append(text_lower)
+
+            return messages
+
+        keywords = ("not found", "no such container", "404", "missing container")
+        messages = _collect_messages(exc)
+        return any(keyword in message for message in messages for keyword in keywords)
 
     def _validate_restore_dir(self, restore_dir: Path) -> None:
         if not restore_dir.exists():
@@ -282,6 +357,7 @@ class DeploymentEngine:
         app_instance: AppInstance,
         domain_map: Dict[int, Dict[str, object]],
     ) -> None:
+        failures: List[str] = []
         for ctx in domain_map.values():
             domain: Domain = ctx["domain"]  # type: ignore[assignment]
             subdomains: Sequence[str] = sorted(ctx["subdomains"]) if ctx.get("subdomains") else []
@@ -295,6 +371,12 @@ class DeploymentEngine:
                 logger.error(
                     "DNS provisioning failed for domain %s: %s", domain.domain_name, exc
                 )
+                failures.append(domain.domain_name)
+
+        if failures:
+            raise RuntimeError(
+                "DNS provisioning failed for: " + ", ".join(sorted(failures))
+            )
 
     def get_app_logs(self, app_instance_id: int, tail: int = 200) -> str:
         db = self._get_db()
