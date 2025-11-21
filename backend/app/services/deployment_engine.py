@@ -18,6 +18,11 @@ from .traefik_service import TraefikLabelBuilder
 logger = logging.getLogger(__name__)
 
 
+class DomainContext(TypedDict):
+    domain: Domain
+    subdomains: Set[str]
+
+
 class DeploymentEngine:
     def __init__(self, db_factory=SessionLocal):
         self.db_factory = db_factory
@@ -349,9 +354,9 @@ class DeploymentEngine:
 
     def _collect_domain_context(
         self, db: Session, app_instance: AppInstance
-    ) -> tuple[List[str], Dict[int, Dict[str, object]], List[str]]:
+    ) -> tuple[List[str], Dict[int, DomainContext], List[str]]:
         fqdn_list: List[str] = []
-        domain_map: Dict[int, Dict[str, object]] = {}
+        domain_map: Dict[int, DomainContext] = {}
         mappings = sorted(
             list(app_instance.domain_mappings),
             key=lambda m: (not m.is_primary, m.id),
@@ -377,9 +382,9 @@ class DeploymentEngine:
 
         wildcard_roots = sorted(
             {
-                ctx["domain"].domain_name  # type: ignore[index]
+                ctx["domain"].domain_name
                 for ctx in domain_map.values()
-                if ctx["domain"].is_wildcard and ctx["domain"].auto_ssl_enabled  # type: ignore[index]
+                if ctx["domain"].is_wildcard and ctx["domain"].auto_ssl_enabled
             }
         )
 
@@ -389,12 +394,16 @@ class DeploymentEngine:
         self,
         dns_manager: DNSManager,
         app_instance: AppInstance,
-        domain_map: Dict[int, Dict[str, object]],
+        domain_map: Dict[int, DomainContext],
     ) -> None:
         failures: List[str] = []
         for ctx in domain_map.values():
-            domain: Domain = ctx["domain"]  # type: ignore[assignment]
-            subdomains: Sequence[str] = sorted(ctx["subdomains"]) if ctx.get("subdomains") else []
+            domain: Domain = ctx["domain"]
+            subdomains: Sequence[str] = (
+                sorted(ctx["subdomains"])
+                if ctx.get("subdomains")
+                else []
+            )
             try:
                 dns_manager.create_dns_for_deployment(
                     app_instance,
