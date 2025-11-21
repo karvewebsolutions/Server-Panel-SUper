@@ -9,7 +9,7 @@ services:
       - "--providers.docker=true"
       - "--entrypoints.web.address=:80"
       - "--entrypoints.websecure.address=:443"
-      - "--certificatesresolvers.lets-encrypt.acme.email=admin@karve.fun"
+      - "--certificatesresolvers.lets-encrypt.acme.email=${ADMIN_EMAIL}"
       - "--certificatesresolvers.lets-encrypt.acme.storage=/letsencrypt/acme.json"
       - "--certificatesresolvers.lets-encrypt.acme.tlschallenge=true"
     ports:
@@ -26,16 +26,12 @@ services:
 
   backend:
     build: ../backend
-    env_file:
-      - ../backend/.env
-    environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://kws:kws@postgres:5432/kws}
-      - SECRET_KEY=${SECRET_KEY:-changeme}
+    env_file: .env
     volumes:
       - cp-backups:/backups
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.backend.rule=Host(`cp.karve.fun`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.backend.rule=Host(`cp.${DOMAIN}`) && PathPrefix(`/api`)"
       - "traefik.http.routers.backend.entrypoints=websecure"
       - "traefik.http.routers.backend.tls.certresolver=lets-encrypt"
       - "traefik.http.services.backend.loadbalancer.server.port=8000"
@@ -48,10 +44,10 @@ services:
   frontend:
     build: ../frontend
     environment:
-      - NEXT_PUBLIC_API_URL=https://cp.karve.fun/api
+      - NEXT_PUBLIC_API_URL=https://cp.${DOMAIN}/api
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.frontend.rule=Host(`cp.karve.fun`)"
+      - "traefik.http.routers.frontend.rule=Host(`cp.${DOMAIN}`)"
       - "traefik.http.routers.frontend.entrypoints=websecure"
       - "traefik.http.routers.frontend.tls.certresolver=lets-encrypt"
       - "traefik.http.services.frontend.loadbalancer.server.port=3000"
@@ -64,9 +60,9 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      - POSTGRES_USER=kws
-      - POSTGRES_PASSWORD=kws
-      - POSTGRES_DB=kws
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:
@@ -81,7 +77,7 @@ services:
     image: powerdns/pdns-auth-46
     environment:
       - PDNS_API=yes
-      - PDNS_API_KEY=changeme
+      - PDNS_API_KEY=${PDNS_API_KEY}
       - PDNS_WEBSERVER=yes
       - PDNS_WEBSERVER_ALLOW_FROM=0.0.0.0/0
       - PDNS_MASTER=yes
@@ -89,9 +85,9 @@ services:
       - PDNS_LAUNCH=gmysql
       - PDNS_GMYSQL_HOST=postgres
       - PDNS_GMYSQL_PORT=5432
-      - PDNS_GMYSQL_USER=kws
-      - PDNS_GMYSQL_PASSWORD=kws
-      - PDNS_GMYSQL_DBNAME=kws
+      - PDNS_GMYSQL_USER=${POSTGRES_USER}
+      - PDNS_GMYSQL_PASSWORD=${POSTGRES_PASSWORD}
+      - PDNS_GMYSQL_DBNAME=${POSTGRES_DB}
     depends_on:
       - postgres
     networks:
@@ -100,10 +96,10 @@ services:
   powerdns-admin:
     image: ngoduykhanh/powerdns-admin:latest
     environment:
-      - SECRET_KEY=changeme
-      - SQLALCHEMY_DATABASE_URI=postgresql://kws:kws@postgres:5432/kws
+      - SECRET_KEY=${SECRET_KEY}
+      - SQLALCHEMY_DATABASE_URI=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - POWERDNS_URL=http://powerdns:8081
-      - POWERDNS_API_KEY=changeme
+      - POWERDNS_API_KEY=${PDNS_API_KEY}
     depends_on:
       - powerdns
       - postgres
@@ -111,7 +107,7 @@ services:
       - internal
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.pdns.rule=Host(`dns.cp.karve.fun`)"
+      - "traefik.http.routers.pdns.rule=Host(`dns.cp.${DOMAIN}`)"
       - "traefik.http.routers.pdns.entrypoints=websecure"
       - "traefik.http.routers.pdns.tls.certresolver=lets-encrypt"
       - "traefik.http.services.pdns.loadbalancer.server.port=80"
@@ -125,7 +121,7 @@ services:
       - proxy
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.static.rule=Host(`static.cp.karve.fun`)"
+      - "traefik.http.routers.static.rule=Host(`static.cp.${DOMAIN}`)"
       - "traefik.http.routers.static.entrypoints=websecure"
       - "traefik.http.routers.static.tls.certresolver=lets-encrypt"
       - "traefik.http.services.static.loadbalancer.server.port=80"
