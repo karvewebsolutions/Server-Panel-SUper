@@ -282,6 +282,7 @@ class DeploymentEngine:
         app_instance: AppInstance,
         domain_map: Dict[int, Dict[str, object]],
     ) -> None:
+        failures: List[str] = []
         for ctx in domain_map.values():
             domain: Domain = ctx["domain"]  # type: ignore[assignment]
             subdomains: Sequence[str] = sorted(ctx["subdomains"]) if ctx.get("subdomains") else []
@@ -295,6 +296,12 @@ class DeploymentEngine:
                 logger.error(
                     "DNS provisioning failed for domain %s: %s", domain.domain_name, exc
                 )
+                failures.append(domain.domain_name)
+
+        if failures:
+            raise RuntimeError(
+                "DNS provisioning failed for: " + ", ".join(sorted(failures))
+            )
 
     def get_app_logs(self, app_instance_id: int, tail: int = 200) -> str:
         db = self._get_db()
