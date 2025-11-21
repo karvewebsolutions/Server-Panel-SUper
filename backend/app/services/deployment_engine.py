@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -81,7 +82,19 @@ class DeploymentEngine:
             server = db.get(Server, app_instance.server_id)
             if not server:
                 raise ValueError("Server not found")
-            self.docker_service.stop_container(server, app_instance.internal_container_name)
+            try:
+                self.docker_service.stop_container(
+                    server, app_instance.internal_container_name
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                if self._is_container_missing_error(exc):
+                    logger.info(
+                        "Container %s already absent when stopping: %s",
+                        app_instance.internal_container_name,
+                        exc,
+                    )
+                else:
+                    raise
             app_instance.status = "stopped"
             db.commit()
         finally:
@@ -107,6 +120,7 @@ class DeploymentEngine:
             data_dir.parent.mkdir(parents=True, exist_ok=True)
 
             if restore_dir:
+                self._validate_restore_dir(restore_dir)
                 # Stop and remove the existing container before deleting the mounted data dir
                 self._stop_and_remove_container(server, app_instance.internal_container_name)
                 self._replace_data_dir(data_dir, restore_dir)
@@ -136,9 +150,7 @@ class DeploymentEngine:
             db.refresh(app_instance)
             return app_instance
         except Exception as exc:  # pylint: disable=broad-except
-            logger.error(
-                "Restart failed for app instance %s: %s", app_instance_id, exc
-            )
+            logger.error("Restart failed for app instance %s: %s", app_instance_id, exc)
             db.query(AppInstance).filter(AppInstance.id == app_instance_id).update(
                 {"status": "error"}
             )
@@ -152,13 +164,79 @@ class DeploymentEngine:
 
     def _stop_and_remove_container(self, server: Server, container_name: str) -> None:
         """Ensure the container is stopped and removed before mutating mounted data."""
-        self.docker_service.stop_container(server, container_name)
-        self.docker_service.remove_container(server, container_name)
+        try:
+            self.docker_service.stop_container(server, container_name)
+        except Exception as exc:  # pylint: disable=broad-except
+            if self._is_container_missing_error(exc):
+                logger.info(
+                    "Container %s already absent when stopping: %s", container_name, exc
+                )
+            else:
+                raise
+
+        try:
+            self.docker_service.remove_container(server, container_name)
+        except Exception as exc:  # pylint: disable=broad-except
+            if self._is_container_missing_error(exc):
+                logger.info(
+                    "Container %s already absent when removing: %s", container_name, exc
+                )
+            else:
+                raise
+
+    @staticmethod
+    def _is_container_missing_error(exc: Exception) -> bool:
+        """Return True if the exception indicates a missing container."""
+
+        # Docker SDK specific error type check (local docker)
+        try:
+            import docker.errors  # type: ignore[import-untyped]
+
+            if isinstance(exc, docker.errors.NotFound):
+                return True
+        except Exception:  # pylint: disable=broad-except
+            # Ignore import errors or any unexpected issues so we can still
+            # fall back to string checks below.
+            pass
+
+        # Generic string checks for agent or other error messages
+        message = str(exc).lower()
+        return "not found" in message or "404" in message
+
+    def _validate_restore_dir(self, restore_dir: Path) -> None:
+        if not restore_dir.exists():
+            raise ValueError(f"Restore directory not found: {restore_dir}")
+        if not restore_dir.is_dir():
+            raise ValueError(f"Restore path is not a directory: {restore_dir}")
+        if not os.access(restore_dir, os.R_OK | os.X_OK):
+            raise ValueError(f"Restore directory is not accessible: {restore_dir}")
 
     def _replace_data_dir(self, data_dir: Path, restore_dir: Path) -> None:
-        if data_dir.exists():
-            shutil.rmtree(data_dir)
-        shutil.copytree(restore_dir, data_dir)
+        temp_data_dir = data_dir.with_name(f"{data_dir.name}_temp_restore")
+        backup_dir = data_dir.with_name(f"{data_dir.name}_backup")
+
+        # Clean up any stale state from previous attempts
+        for path in (temp_data_dir, backup_dir):
+            if path.exists():
+                shutil.rmtree(path)
+
+        shutil.copytree(restore_dir, temp_data_dir)
+
+        backup_created = False
+        try:
+            if data_dir.exists():
+                shutil.move(str(data_dir), str(backup_dir))
+                backup_created = True
+            shutil.move(str(temp_data_dir), str(data_dir))
+        except Exception:
+            if backup_created and backup_dir.exists():
+                shutil.move(str(backup_dir), str(data_dir))
+            if temp_data_dir.exists():
+                shutil.rmtree(temp_data_dir)
+            raise
+        else:
+            if backup_dir.exists():
+                shutil.rmtree(backup_dir)
 
     def _collect_domain_context(
         self, db: Session, app_instance: AppInstance

@@ -30,23 +30,47 @@ def _sha256_checksum(file_path: Path) -> str:
     return digest.hexdigest()
 
 
+def _get_app_data_base_path() -> Path:
+    """Return the root directory where app instance data is stored."""
+
+    env_path = os.getenv("SERVER_PANEL_APP_DATA_PATH") or os.getenv("APP_DATA_PATH")
+    if env_path:
+        return Path(env_path)
+    return Path("/var/lib/server-panel/app-data")
+
+
 def create_app_instance_backup_tar(app_instance: AppInstance) -> Path:
     temp_dir = Path(tempfile.mkdtemp(prefix=f"app-{app_instance.id}-backup-"))
     content_dir = temp_dir / "data"
     content_dir.mkdir(parents=True, exist_ok=True)
+
+    app_data_root = _get_app_data_base_path()
+    data_dir = app_data_root / f"app_instance_{app_instance.id}"
+    data_dir_exists = data_dir.exists()
 
     manifest_path = content_dir / "manifest.txt"
     manifest_path.write_text(
         f"Backup for app instance {app_instance.id}\n"
         f"Name: {app_instance.display_name}\n"
         f"Image: {app_instance.docker_image}\n"
-        "TODO: include application data and database dumps.\n",
+        f"Data directory: {data_dir}\n"
+        f"Data directory present: {data_dir_exists}\n",
         encoding="utf-8",
     )
 
     tar_path = temp_dir / f"app_instance_{app_instance.id}.tar.gz"
     with tarfile.open(tar_path, "w:gz") as archive:
-        archive.add(content_dir, arcname=f"app_instance_{app_instance.id}")
+        archive.add(
+            manifest_path, arcname=f"app_instance_{app_instance.id}/manifest.txt"
+        )
+        if data_dir_exists:
+            archive.add(data_dir, arcname=f"app_instance_{app_instance.id}/app_data")
+        else:
+            logger.warning(
+                "Data directory for app instance %s is missing at %s",
+                app_instance.id,
+                data_dir,
+            )
     return tar_path
 
 
@@ -175,13 +199,11 @@ class BackupService:
         finally:
             try:
                 if "tar_path" in locals():
-                    Path(tar_path).unlink(missing_ok=True)
-                    temp_dir = Path(tar_path).parent
+                    tar_file_path = Path(tar_path)
+                    temp_dir = tar_file_path.parent
+                    tar_file_path.unlink(missing_ok=True)
                     if temp_dir.exists():
-                        for item in temp_dir.iterdir():
-                            if item.exists():
-                                item.unlink(missing_ok=True)
-                        temp_dir.rmdir()
+                        shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception:  # pylint: disable=broad-except
                 logger.debug("Failed to clean up temp backup files", exc_info=True)
 
