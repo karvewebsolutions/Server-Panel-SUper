@@ -15,8 +15,9 @@ function MetricRow({ label, metric, field }: { label: string; metric?: ServerMet
   );
 }
 
-export default async function ServerDetailPage({ params }: { params: { id: string } }) {
-  const serverId = Number(params.id);
+export default async function ServerDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = await params;
+  const serverId = Number(resolvedParams.id);
   const server = await getServer(serverId).catch(() => null);
   if (!server) return notFound();
   const latest = server.metrics[0];

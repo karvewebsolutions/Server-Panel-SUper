@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -89,7 +90,19 @@ class DeploymentEngine:
             server = db.get(Server, app_instance.server_id)
             if not server:
                 raise ValueError("Server not found")
-            self.docker_service.stop_container(server, app_instance.internal_container_name)
+            try:
+                self.docker_service.stop_container(
+                    server, app_instance.internal_container_name
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                if self._is_container_missing_error(exc):
+                    logger.info(
+                        "Container %s already absent when stopping: %s",
+                        app_instance.internal_container_name,
+                        exc,
+                    )
+                else:
+                    raise
             app_instance.status = "stopped"
             db.commit()
         finally:
@@ -109,37 +122,20 @@ class DeploymentEngine:
 
             fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
             dns_manager = DNSManager(db)
-            dns_success, dns_errors = self._provision_dns_records(
-                dns_manager, app_instance, domain_map
-            )
-            if not dns_success:
-                logger.error(
-                    "DNS provisioning failed for app instance %s; aborting restart before container stop",
-                    app_instance.id,
-                )
-                for dns_error in dns_errors:
-                    logger.error("DNS provisioning error: %s", dns_error)
-                app_instance.status = "error"
-                db.commit()
-                db.refresh(app_instance)
-                return app_instance
-
-            # Stop the running container before manipulating the data directory to
-            # avoid copying over a mounted path. Removing the container only after
-            # DNS provisioning succeeds prevents unnecessary downtime when DNS
-            # provisioning fails.
-            self.docker_service.stop_container(server, app_instance.internal_container_name)
-            self.docker_service.remove_container(server, app_instance.internal_container_name)
+            self._provision_dns_records(dns_manager, app_instance, domain_map)
 
             data_dir = self._get_data_dir(app_instance.id)
-            data_dir.mkdir(parents=True, exist_ok=True)
+            data_dir.parent.mkdir(parents=True, exist_ok=True)
+
             if restore_dir:
-                # Ensure the runtime data directory reflects the restored content
-                # that was downloaded and extracted for this app instance.
-                if data_dir.exists():
-                    shutil.rmtree(data_dir)
-                shutil.copytree(restore_dir, data_dir)
-                shutil.rmtree(restore_dir, ignore_errors=True)
+                self._validate_restore_dir(restore_dir)
+                # Stop and remove the existing container before deleting the mounted data dir
+                self._stop_and_remove_container(server, app_instance.internal_container_name)
+                self._replace_data_dir(data_dir, restore_dir)
+            else:
+                # Ensure we restart from a clean slate
+                self._stop_and_remove_container(server, app_instance.internal_container_name)
+                data_dir.mkdir(parents=True, exist_ok=True)
             ports = {f"{app_instance.docker_port}/tcp": None}
             labels = TraefikLabelBuilder.build_labels_for_app_instance(
                 app_instance,
@@ -161,11 +157,94 @@ class DeploymentEngine:
             db.commit()
             db.refresh(app_instance)
             return app_instance
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.error("Restart failed for app instance %s: %s", app_instance_id, exc)
+            db.query(AppInstance).filter(AppInstance.id == app_instance_id).update(
+                {"status": "error"}
+            )
+            db.commit()
+            raise
         finally:
             db.close()
 
     def _get_data_dir(self, app_instance_id: int) -> Path:
         return Path("/var/lib/server-panel/app-data") / f"app_instance_{app_instance_id}"
+
+    def _stop_and_remove_container(self, server: Server, container_name: str) -> None:
+        """Ensure the container is stopped and removed before mutating mounted data."""
+        try:
+            self.docker_service.stop_container(server, container_name)
+        except Exception as exc:  # pylint: disable=broad-except
+            if self._is_container_missing_error(exc):
+                logger.info(
+                    "Container %s already absent when stopping: %s", container_name, exc
+                )
+            else:
+                raise
+
+        try:
+            self.docker_service.remove_container(server, container_name)
+        except Exception as exc:  # pylint: disable=broad-except
+            if self._is_container_missing_error(exc):
+                logger.info(
+                    "Container %s already absent when removing: %s", container_name, exc
+                )
+            else:
+                raise
+
+    @staticmethod
+    def _is_container_missing_error(exc: Exception) -> bool:
+        """Return True if the exception indicates a missing container."""
+
+        # Docker SDK specific error type check (local docker)
+        try:
+            import docker.errors  # type: ignore[import-untyped]
+
+            if isinstance(exc, docker.errors.NotFound):
+                return True
+        except Exception:  # pylint: disable=broad-except
+            # Ignore import errors or any unexpected issues so we can still
+            # fall back to string checks below.
+            pass
+
+        # Generic string checks for agent or other error messages
+        message = str(exc).lower()
+        return "not found" in message or "404" in message
+
+    def _validate_restore_dir(self, restore_dir: Path) -> None:
+        if not restore_dir.exists():
+            raise ValueError(f"Restore directory not found: {restore_dir}")
+        if not restore_dir.is_dir():
+            raise ValueError(f"Restore path is not a directory: {restore_dir}")
+        if not os.access(restore_dir, os.R_OK | os.X_OK):
+            raise ValueError(f"Restore directory is not accessible: {restore_dir}")
+
+    def _replace_data_dir(self, data_dir: Path, restore_dir: Path) -> None:
+        temp_data_dir = data_dir.with_name(f"{data_dir.name}_temp_restore")
+        backup_dir = data_dir.with_name(f"{data_dir.name}_backup")
+
+        # Clean up any stale state from previous attempts
+        for path in (temp_data_dir, backup_dir):
+            if path.exists():
+                shutil.rmtree(path)
+
+        shutil.copytree(restore_dir, temp_data_dir)
+
+        backup_created = False
+        try:
+            if data_dir.exists():
+                shutil.move(str(data_dir), str(backup_dir))
+                backup_created = True
+            shutil.move(str(temp_data_dir), str(data_dir))
+        except Exception:
+            if backup_created and backup_dir.exists():
+                shutil.move(str(backup_dir), str(data_dir))
+            if temp_data_dir.exists():
+                shutil.rmtree(temp_data_dir)
+            raise
+        else:
+            if backup_dir.exists():
+                shutil.rmtree(backup_dir)
 
     def _collect_domain_context(
         self, db: Session, app_instance: AppInstance
@@ -210,9 +289,8 @@ class DeploymentEngine:
         dns_manager: DNSManager,
         app_instance: AppInstance,
         domain_map: Dict[int, Dict[str, object]],
-    ) -> tuple[bool, List[str]]:
-        success = True
-        errors: List[str] = []
+    ) -> None:
+        failures: List[str] = []
         for ctx in domain_map.values():
             domain: Domain = ctx["domain"]  # type: ignore[assignment]
             subdomains: Sequence[str] = sorted(ctx["subdomains"]) if ctx.get("subdomains") else []
@@ -226,10 +304,12 @@ class DeploymentEngine:
                 logger.error(
                     "DNS provisioning failed for domain %s: %s", domain.domain_name, exc
                 )
-                success = False
-                errors.append(f"{domain.domain_name}: {exc}")
+                failures.append(domain.domain_name)
 
-        return success, errors
+        if failures:
+            raise RuntimeError(
+                "DNS provisioning failed for: " + ", ".join(sorted(failures))
+            )
 
     def get_app_logs(self, app_instance_id: int, tail: int = 200) -> str:
         db = self._get_db()
