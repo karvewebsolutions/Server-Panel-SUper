@@ -195,6 +195,32 @@ class DeploymentEngine:
 
                 response = getattr(err, "response", None)
                 if response is not None:
+                    status_code = getattr(response, "status_code", None)
+                    if status_code in {400, 404}:
+                        try:
+                            data = response.json()
+                        except Exception:  # pylint: disable=broad-except
+                            data = None
+
+                        detail: Optional[str] = None
+                        if isinstance(data, dict):
+                            raw_detail = data.get("detail")
+                            detail = raw_detail if isinstance(raw_detail, str) else None
+                        elif isinstance(data, str):
+                            detail = data
+
+                        if detail:
+                            detail_lower = detail.lower()
+                            if detail_lower not in seen:
+                                seen.add(detail_lower)
+                                messages.append(detail_lower)
+                            # If the agent responds with a wrapped Docker NotFound
+                            # message we can return early when we see the expected
+                            # keywords to avoid falling through to outer messages
+                            # that lack the context.
+                            if any(keyword in detail_lower for keyword in keywords):
+                                return messages
+
                     try:
                         data = response.json()
                     except Exception:  # pylint: disable=broad-except
