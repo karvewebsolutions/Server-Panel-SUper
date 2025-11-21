@@ -129,11 +129,28 @@ class DeploymentEngine:
 
             if restore_dir:
                 self._validate_restore_dir(restore_dir)
-                # Stop and remove the existing container before deleting the mounted data dir
-                self._stop_and_remove_container(server, app_instance.internal_container_name)
-                self._replace_data_dir(data_dir, restore_dir)
+                temp_restore_dir = data_dir.with_name(f"{data_dir.name}_temp_restore")
+                try:
+                    # First, copy the restore data to a temporary location. This is the step
+                    # most likely to fail if the restore archive is corrupted or unreadable.
+                    if temp_restore_dir.exists():
+                        shutil.rmtree(temp_restore_dir)
+                    shutil.copytree(restore_dir, temp_restore_dir)
+
+                    # Only after the copy succeeds, stop the live container
+                    self._stop_and_remove_container(
+                        server, app_instance.internal_container_name
+                    )
+
+                    # Atomically replace the data directory with the restored content.
+                    # The source `temp_restore_dir` is moved into place.
+                    self._replace_data_dir(data_dir, temp_restore_dir)
+                finally:
+                    # Clean up the temporary directory if it still exists
+                    if temp_restore_dir.exists():
+                        shutil.rmtree(temp_restore_dir)
             else:
-                # Ensure we restart from a clean slate
+                # For a simple restart, just ensure the container is stopped and data dir exists
                 self._stop_and_remove_container(server, app_instance.internal_container_name)
                 data_dir.mkdir(parents=True, exist_ok=True)
             ports = {f"{app_instance.docker_port}/tcp": None}
@@ -159,10 +176,23 @@ class DeploymentEngine:
             return app_instance
         except Exception as exc:  # pylint: disable=broad-except
             logger.error("Restart failed for app instance %s: %s", app_instance_id, exc)
-            db.query(AppInstance).filter(AppInstance.id == app_instance_id).update(
-                {"status": "error"}
-            )
-            db.commit()
+            # Use a transaction-safe update
+            try:
+                if not db.is_active:
+                    db.begin()
+                app_instance = db.get(AppInstance, app_instance_id)
+                if app_instance:
+                    app_instance.status = "error"
+                    db.commit()
+                else:
+                    db.rollback()
+            except Exception as db_exc:
+                logger.error(
+                    "Database error while setting error status for app instance %s: %s",
+                    app_instance_id,
+                    db_exc,
+                )
+                db.rollback()
             raise
         finally:
             db.close()
@@ -180,7 +210,11 @@ class DeploymentEngine:
                     "Container %s already absent when stopping: %s", container_name, exc
                 )
             else:
-                raise
+                logger.warning(
+                    "Error stopping container %s, proceeding with removal: %s",
+                    container_name,
+                    exc,
+                )
 
         try:
             self.docker_service.remove_container(server, container_name)
@@ -286,30 +320,30 @@ class DeploymentEngine:
         if not os.access(restore_dir, os.R_OK | os.X_OK):
             raise ValueError(f"Restore directory is not accessible: {restore_dir}")
 
-    def _replace_data_dir(self, data_dir: Path, restore_dir: Path) -> None:
-        temp_data_dir = data_dir.with_name(f"{data_dir.name}_temp_restore")
+    def _replace_data_dir(self, data_dir: Path, source_dir: Path) -> None:
+        """Atomically replace the data directory with a new version from source_dir."""
         backup_dir = data_dir.with_name(f"{data_dir.name}_backup")
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
 
-        # Clean up any stale state from previous attempts
-        for path in (temp_data_dir, backup_dir):
-            if path.exists():
-                shutil.rmtree(path)
-
-        shutil.copytree(restore_dir, temp_data_dir)
-
+        # The source_dir (containing restored data) is expected to exist.
+        # The live data_dir may or may not exist.
         backup_created = False
+        if data_dir.exists():
+            # Create a backup of the current data directory
+            shutil.move(str(data_dir), str(backup_dir))
+            backup_created = True
+
         try:
-            if data_dir.exists():
-                shutil.move(str(data_dir), str(backup_dir))
-                backup_created = True
-            shutil.move(str(temp_data_dir), str(data_dir))
+            # Move the new content into place
+            shutil.move(str(source_dir), str(data_dir))
         except Exception:
-            if backup_created and backup_dir.exists():
+            # If the move fails, restore the backup
+            if backup_created:
                 shutil.move(str(backup_dir), str(data_dir))
-            if temp_data_dir.exists():
-                shutil.rmtree(temp_data_dir)
             raise
-        else:
+        finally:
+            # Clean up the backup if the operation was successful
             if backup_dir.exists():
                 shutil.rmtree(backup_dir)
 
