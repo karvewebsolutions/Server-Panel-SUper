@@ -78,17 +78,17 @@ echo ".env file created successfully."
 # Start the application
 echo "Starting the KWS Control Panel... This may take a few minutes."
 cd infra
-docker-compose up -d --build
+docker compose up -d --build
 
 # Wait for the database to be ready
 echo "Waiting for the database to be ready..."
-until docker-compose exec postgres pg_isready -U kws -d kws -h localhost -p 5432; do
+until docker compose exec postgres pg_isready -U kws -d kws -h localhost -p 5432; do
   sleep 2
 done
 
 # Create the admin user
 echo "Creating the admin user..."
-docker-compose exec -T -e ADMIN_PASSWORD=${ADMIN_PASSWORD} backend python /app/scripts/create-admin.py
+docker compose exec -T -e ADMIN_PASSWORD=${ADMIN_PASSWORD} backend python /app/scripts/create-admin.py
 
 echo "KWS Control Panel has been installed successfully!"
 echo "You can access your control panel at: https://cp.${DOMAIN}"
