@@ -39,12 +39,14 @@ class DeploymentEngine:
 
             fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
             dns_manager = DNSManager(db)
-            dns_success = self._provision_dns_records(
+            dns_success, dns_errors = self._provision_dns_records(
                 dns_manager, app_instance, domain_map
             )
             if not dns_success:
+                error_detail = "; ".join(dns_errors) if dns_errors else "unknown error"
                 raise RuntimeError(
                     "DNS provisioning failed for one or more domains; aborting deployment"
+                    f" ({error_detail})"
                 )
             labels = TraefikLabelBuilder.build_labels_for_app_instance(
                 app_instance, fqdn_list, wildcard_domains=wildcard_roots
@@ -107,7 +109,7 @@ class DeploymentEngine:
 
             fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
             dns_manager = DNSManager(db)
-            dns_success = self._provision_dns_records(
+            dns_success, dns_errors = self._provision_dns_records(
                 dns_manager, app_instance, domain_map
             )
             if not dns_success:
@@ -115,6 +117,8 @@ class DeploymentEngine:
                     "DNS provisioning failed for app instance %s; aborting restart before container stop",
                     app_instance.id,
                 )
+                for dns_error in dns_errors:
+                    logger.error("DNS provisioning error: %s", dns_error)
                 app_instance.status = "error"
                 db.commit()
                 db.refresh(app_instance)
@@ -206,8 +210,9 @@ class DeploymentEngine:
         dns_manager: DNSManager,
         app_instance: AppInstance,
         domain_map: Dict[int, Dict[str, object]],
-    ) -> bool:
+    ) -> tuple[bool, List[str]]:
         success = True
+        errors: List[str] = []
         for ctx in domain_map.values():
             domain: Domain = ctx["domain"]  # type: ignore[assignment]
             subdomains: Sequence[str] = sorted(ctx["subdomains"]) if ctx.get("subdomains") else []
@@ -222,8 +227,9 @@ class DeploymentEngine:
                     "DNS provisioning failed for domain %s: %s", domain.domain_name, exc
                 )
                 success = False
+                errors.append(f"{domain.domain_name}: {exc}")
 
-        return success
+        return success, errors
 
     def get_app_logs(self, app_instance_id: int, tail: int = 200) -> str:
         db = self._get_db()
