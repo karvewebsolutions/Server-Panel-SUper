@@ -159,7 +159,18 @@ export default function BackupsPage() {
                   </div>
                   <div className="text-xs text-slate-400">Type: {target.type}</div>
                   <div className="mt-1 text-xs text-slate-400">
-                    Path/Endpoint: {target.config_json.base_path || target.config_json.bucket || ""}
+                    {(() => {
+                      const basePath =
+                        typeof target.config_json["base_path"] === "string"
+                          ? target.config_json["base_path"]
+                          : "";
+                      const bucket =
+                        typeof target.config_json["bucket"] === "string"
+                          ? target.config_json["bucket"]
+                          : "";
+                      const endpoint = basePath || bucket;
+                      return `Path/Endpoint: ${endpoint || "N/A"}`;
+                    })()}
                   </div>
                 </div>
               ))}

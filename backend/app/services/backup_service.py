@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
+import shutil
 import tarfile
 import tempfile
 from datetime import datetime
@@ -29,23 +30,47 @@ def _sha256_checksum(file_path: Path) -> str:
     return digest.hexdigest()
 
 
+def _get_app_data_base_path() -> Path:
+    """Return the root directory where app instance data is stored."""
+
+    env_path = os.getenv("SERVER_PANEL_APP_DATA_PATH") or os.getenv("APP_DATA_PATH")
+    if env_path:
+        return Path(env_path)
+    return Path("/var/lib/server-panel/app-data")
+
+
 def create_app_instance_backup_tar(app_instance: AppInstance) -> Path:
     temp_dir = Path(tempfile.mkdtemp(prefix=f"app-{app_instance.id}-backup-"))
     content_dir = temp_dir / "data"
     content_dir.mkdir(parents=True, exist_ok=True)
+
+    app_data_root = _get_app_data_base_path()
+    data_dir = app_data_root / f"app_instance_{app_instance.id}"
+    data_dir_exists = data_dir.exists()
 
     manifest_path = content_dir / "manifest.txt"
     manifest_path.write_text(
         f"Backup for app instance {app_instance.id}\n"
         f"Name: {app_instance.display_name}\n"
         f"Image: {app_instance.docker_image}\n"
-        "TODO: include application data and database dumps.\n",
+        f"Data directory: {data_dir}\n"
+        f"Data directory present: {data_dir_exists}\n",
         encoding="utf-8",
     )
 
     tar_path = temp_dir / f"app_instance_{app_instance.id}.tar.gz"
     with tarfile.open(tar_path, "w:gz") as archive:
-        archive.add(content_dir, arcname=f"app_instance_{app_instance.id}")
+        archive.add(
+            manifest_path, arcname=f"app_instance_{app_instance.id}/manifest.txt"
+        )
+        if data_dir_exists:
+            archive.add(data_dir, arcname=f"app_instance_{app_instance.id}/app_data")
+        else:
+            logger.warning(
+                "Data directory for app instance %s is missing at %s",
+                app_instance.id,
+                data_dir,
+            )
     return tar_path
 
 
@@ -174,13 +199,11 @@ class BackupService:
         finally:
             try:
                 if "tar_path" in locals():
-                    Path(tar_path).unlink(missing_ok=True)
-                    temp_dir = Path(tar_path).parent
+                    tar_file_path = Path(tar_path)
+                    temp_dir = tar_file_path.parent
+                    tar_file_path.unlink(missing_ok=True)
                     if temp_dir.exists():
-                        for item in temp_dir.iterdir():
-                            if item.exists():
-                                item.unlink(missing_ok=True)
-                        temp_dir.rmdir()
+                        shutil.rmtree(temp_dir, ignore_errors=True)
             except Exception:  # pylint: disable=broad-except
                 logger.debug("Failed to clean up temp backup files", exc_info=True)
 
@@ -207,14 +230,46 @@ class BackupService:
             raise ValueError("Backup target missing for snapshot")
 
         handler = self.get_target_handler(target)
-        temp_file = Path(tempfile.mkdtemp()) / "restore.tar.gz"
-        handler.download(snapshot.location_uri, str(temp_file))
-        # TODO: stop container, restore files, restart app.
-        if temp_file.exists():
-            temp_file.unlink()
-            temp_dir = temp_file.parent
-            if temp_dir.exists():
-                temp_dir.rmdir()
+        temp_dir = Path(tempfile.mkdtemp(prefix=f"app-{app_instance_id}-restore-"))
+        temp_file = temp_dir / "restore.tar.gz"
+        extract_dir = temp_dir / "extracted"
+        try:
+            handler.download(snapshot.location_uri, str(temp_file))
+            if snapshot.checksum:
+                downloaded_checksum = _sha256_checksum(temp_file)
+                if downloaded_checksum != snapshot.checksum:
+                    raise ValueError("Downloaded snapshot checksum mismatch")
+
+            extract_dir.mkdir(parents=True, exist_ok=True)
+            with tarfile.open(temp_file, "r:gz") as archive:
+                archive.extractall(extract_dir)
+
+            content_dir = extract_dir / f"app_instance_{app_instance_id}"
+            if not content_dir.exists():
+                raise ValueError("Backup archive is missing expected content directory")
+
+            restore_target_dir = Path("/var/lib/server-panel/restores") / f"app_instance_{app_instance_id}"
+            if restore_target_dir.exists():
+                shutil.rmtree(restore_target_dir)
+            restore_target_dir.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(content_dir, restore_target_dir)
+
+            # Restart the application container to pick up restored content.
+            from .deployment_engine import DeploymentEngine
+
+            engine = DeploymentEngine()
+            engine.stop_app_instance(app_instance_id)
+            engine.restart_app_instance(app_instance_id, restore_dir=restore_target_dir)
+        finally:
+            try:
+                if temp_file.exists():
+                    temp_file.unlink()
+                if extract_dir.exists():
+                    shutil.rmtree(extract_dir, ignore_errors=True)
+                if temp_dir.exists():
+                    temp_dir.rmdir()
+            except Exception:  # pylint: disable=broad-except
+                logger.debug("Failed to clean up temp restore files", exc_info=True)
 
     def run_manual_backup(
         self, scope_type: str, scope_id: int, target_id: Optional[int] = None
