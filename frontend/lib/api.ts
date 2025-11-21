@@ -168,6 +168,56 @@ export interface AttachDomainsRequest {
   domains: DomainMappingInput[];
 }
 
+export interface BackupTarget {
+  id: number;
+  name: string;
+  type: string;
+  config_json: Record<string, unknown>;
+  is_default: boolean;
+  created_by_user_id?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BackupPolicy {
+  id: number;
+  name: string;
+  scope_type: string;
+  scope_id?: number | null;
+  schedule_cron?: string | null;
+  backup_target_id: number;
+  retain_last?: number | null;
+  is_enabled: boolean;
+  created_by_user_id?: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BackupJob {
+  id: number;
+  policy_id?: number | null;
+  scope_type: string;
+  scope_id: number;
+  backup_target_id: number;
+  status: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  error_message?: string | null;
+  created_at: string;
+}
+
+export interface BackupSnapshot {
+  id: number;
+  job_id: number;
+  scope_type: string;
+  scope_id: number;
+  location_uri: string;
+  size_bytes?: number | null;
+  checksum?: string | null;
+  created_at: string;
+  job?: BackupJob | null;
+}
+
 export async function getAppBlueprints(): Promise<AppBlueprint[]> {
   return request<AppBlueprint[]>("/apps/blueprints");
 }
@@ -199,6 +249,54 @@ export async function createAppInstance(payload: CreateAppInstanceRequest): Prom
   return request<AppInstance>("/apps/instances", {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export async function getBackupTargets(): Promise<BackupTarget[]> {
+  return request<BackupTarget[]>("/backup-targets");
+}
+
+export async function createBackupTarget(
+  payload: Omit<BackupTarget, "id" | "created_at" | "updated_at" | "created_by_user_id">,
+): Promise<BackupTarget> {
+  return request<BackupTarget>("/backup-targets", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getBackupPolicies(): Promise<BackupPolicy[]> {
+  return request<BackupPolicy[]>("/backup-policies");
+}
+
+export async function createBackupPolicy(
+  payload: Omit<BackupPolicy, "id" | "created_at" | "updated_at" | "created_by_user_id">,
+): Promise<BackupPolicy> {
+  return request<BackupPolicy>("/backup-policies", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function getAppInstanceBackups(appInstanceId: number): Promise<BackupSnapshot[]> {
+  return request<BackupSnapshot[]>(`/backups/app-instances/${appInstanceId}/snapshots`);
+}
+
+export async function runAppInstanceBackup(
+  appInstanceId: number,
+  payload?: { target_id?: number; policy_id?: number },
+): Promise<BackupJob> {
+  return request<BackupJob>(`/backups/app-instances/${appInstanceId}/run`, {
+    method: "POST",
+    body: JSON.stringify(payload ?? {}),
+  });
+}
+
+export async function restoreAppInstanceBackup(appInstanceId: number, snapshotId: number): Promise<void> {
+  await request(`/backups/app-instances/${appInstanceId}/restore`, {
+    method: "POST",
+    body: JSON.stringify({ snapshot_id: snapshotId }),
+    skipJson: true,
   });
 }
 
