@@ -18,7 +18,7 @@ import {
   suggestSubdomain,
 } from "../../lib/api";
 
-type DomainRow = DomainMappingInput & { id: string };
+type DomainRow = Omit<DomainMappingInput, "domain_id"> & { id: string; domain_id?: number };
 
 const steps = ["App Type", "Server", "Domains", "Review"];
 
