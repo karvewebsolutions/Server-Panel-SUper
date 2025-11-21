@@ -40,7 +40,15 @@ class DeploymentEngine:
 
             fqdn_list, domain_map, wildcard_roots = self._collect_domain_context(db, app_instance)
             dns_manager = DNSManager(db)
-            self._provision_dns_records(dns_manager, app_instance, domain_map)
+            dns_success, dns_errors = self._provision_dns_records(
+                dns_manager, app_instance, domain_map
+            )
+            if not dns_success:
+                error_detail = "; ".join(dns_errors) if dns_errors else "unknown error"
+                raise RuntimeError(
+                    "DNS provisioning failed for one or more domains; aborting deployment"
+                    f" ({error_detail})"
+                )
             labels = TraefikLabelBuilder.build_labels_for_app_instance(
                 app_instance, fqdn_list, wildcard_domains=wildcard_roots
             )
