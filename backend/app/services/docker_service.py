@@ -45,7 +45,29 @@ class DockerService:
             response.raise_for_status()
         except requests.RequestException as exc:  # type: ignore[import-untyped]
             logger.error("Failed to contact agent %s: %s", server.name, exc)
-            raise RuntimeError(f"Agent request failed: {exc}") from exc
+            extra_detail = None
+            response = getattr(exc, "response", None)
+            if response is not None:
+                try:
+                    data = response.json()
+                except Exception:  # pylint: disable=broad-except
+                    data = None
+
+                if isinstance(data, dict):
+                    detail = data.get("detail")
+                    if isinstance(detail, str):
+                        extra_detail = detail
+                elif isinstance(data, str):
+                    extra_detail = data
+
+                if extra_detail is None:
+                    try:
+                        extra_detail = response.text
+                    except Exception:  # pylint: disable=broad-except
+                        extra_detail = None
+
+            detail_suffix = f" (detail: {extra_detail})" if extra_detail else ""
+            raise RuntimeError(f"Agent request failed: {exc}{detail_suffix}") from exc
         return response.json() if response.content else None
 
     def run_container(
