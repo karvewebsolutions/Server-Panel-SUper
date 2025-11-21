@@ -16,24 +16,9 @@ def init_database():
     Base.metadata.create_all(bind=engine)
 
 
-def seed_admin(db: Session):
-    admin = db.query(User).filter(User.email == settings.admin_email).first()
-    if not admin:
-        admin = User(
-            email=settings.admin_email,
-            hashed_password=get_password_hash(settings.admin_password),
-            role="admin",
-        )
-        db.add(admin)
-        db.commit()
-        db.refresh(admin)
-
-
 @asynccontextmanager
 def lifespan(app: FastAPI):
     init_database()
-    with next(get_db()) as db:
-        seed_admin(db)
     yield
 
 
