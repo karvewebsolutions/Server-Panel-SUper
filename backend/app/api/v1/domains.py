@@ -96,28 +96,31 @@ def list_domain_records(domain_id: int, db: Session = Depends(get_db)):
 def create_domain_record(
     domain_id: int, payload: DNSRecordCreate, db: Session = Depends(get_db)
 ):
-    manager = DNSManager(db)
-
-    with db.begin():
+    try:
         domain = db.get(Domain, domain_id)
         if not domain:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Domain not found"
             )
-
         record = DNSRecord(domain_id=domain_id, **payload.model_dump())
+        manager = DNSManager(db)
         record.domain = domain
         provider = manager._get_provider(domain)
-
         if not hasattr(provider, "create_record"):
             raise HTTPException(
                 status_code=status.HTTP_501_NOT_IMPLEMENTED,
                 detail="Provider does not support record creation",
             )
-
         db.add(record)
         db.flush()
         provider.create_record(record)
+        db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception:
+        db.rollback()
+        raise
 
     db.refresh(record)
     return record
