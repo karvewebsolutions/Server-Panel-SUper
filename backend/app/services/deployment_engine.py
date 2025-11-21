@@ -184,6 +184,7 @@ class DeploymentEngine:
                 logger.error(
                     "DNS provisioning failed for domain %s: %s", domain.domain_name, exc
                 )
+                raise
 
     def get_app_logs(self, app_instance_id: int, tail: int = 200) -> str:
         db = self._get_db()
