@@ -105,9 +105,16 @@ def create_domain_record(
     record.domain = domain
     provider = manager._get_provider(domain)
     try:
-        if hasattr(provider, "create_record"):
-            provider.create_record(record)
+        if not hasattr(provider, "create_record"):
+            raise HTTPException(
+                status_code=status.HTTP_501_NOT_IMPLEMENTED,
+                detail="Provider does not support record creation",
+            )
+        provider.create_record(record)
         db.commit()
+    except HTTPException:
+        db.rollback()
+        raise
     except Exception:
         db.rollback()
         raise
