@@ -1,6 +1,6 @@
 services:
   traefik:
-    image: traefik:v3.1
+    image: traefik:v2.9
     command:
       - "--providers.file.filename=/etc/traefik/dynamic/config.yml"
       - "--providers.file.watch=true"
@@ -34,7 +34,8 @@ services:
       - "traefik.http.routers.backend.tls.certresolver=lets-encrypt"
       - "traefik.http.services.backend.loadbalancer.server.port=8000"
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     networks:
       - internal
       - proxy
@@ -65,6 +66,11 @@ services:
       - postgres-data:/var/lib/postgresql/data
     networks:
       - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   redis:
     image: redis:7-alpine
@@ -99,8 +105,10 @@ services:
       - POWERDNS_URL=http://powerdns:8081
       - POWERDNS_API_KEY=${PDNS_API_KEY}
     depends_on:
-      - powerdns
-      - postgres
+      postgres:
+        condition: service_healthy
+      powerdns:
+        condition: service_started
     networks:
       - internal
     labels:
